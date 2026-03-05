@@ -2,10 +2,10 @@
 APScheduler polling loop for the Macro Trader bot.
 
 Wires the full pipeline together:
-  NewsClient → SentimentAnalyzer → SignalGenerator → RiskManager → BrokerClient → Database
+  NewsClient + RSSClient → SentimentAnalyzer → SignalGenerator → RiskManager → BrokerClient → Database
 
 Every poll interval:
-  1. Fetch latest general news from Finnhub
+  1. Fetch latest news from Finnhub + all RSS feeds
   2. Skip articles already in the DB (dedup by article_id)
   3. Score new articles with FinBERT
   4. Run the rules engine to generate signals
@@ -26,6 +26,7 @@ from core.broker import BrokerClient
 from core.db import Database
 from core.news import NewsClient
 from core.risk_manager import RiskManager
+from core.rss import RSSClient
 from core.sentiment import SentimentAnalyzer
 from core.signal_gen import SignalGenerator
 
@@ -39,6 +40,7 @@ class BotScheduler:
         logger.info("Initialising pipeline components …")
         self._db = Database()
         self._news = NewsClient()
+        self._rss = RSSClient()
         self._sentiment = SentimentAnalyzer()
         self._signals = SignalGenerator()
         self._broker = BrokerClient()
@@ -55,23 +57,35 @@ class BotScheduler:
         """Single poll cycle — called by APScheduler on the interval."""
         logger.info("Poll cycle starting …")
 
+        # Fetch from all sources
+        raw_articles: list[dict] = []
         try:
-            raw_articles = self._news.get_general_news()
+            raw_articles.extend(self._news.get_general_news())
         except Exception:
-            logger.exception("News fetch failed — skipping this cycle")
-            return
+            logger.exception("Finnhub fetch failed — continuing with RSS only")
+
+        try:
+            raw_articles.extend(self._rss.get_articles())
+        except Exception:
+            logger.exception("RSS fetch failed — continuing with Finnhub only")
 
         if not raw_articles:
             logger.info("No articles returned this cycle.")
             return
 
-        # Dedup: only process articles we haven't seen before
-        new_articles = [
-            a for a in raw_articles
-            if not self._db.article_exists(a.get("id", -1))
-        ]
+        # Dedup by article_id against the DB, then by ID within this batch
+        seen_ids: set[int] = set()
+        new_articles: list[dict] = []
+        for a in raw_articles:
+            aid = a.get("id", -1)
+            if aid in seen_ids:
+                continue
+            seen_ids.add(aid)
+            if not self._db.article_exists(aid):
+                new_articles.append(a)
+
         logger.info(
-            "Fetched %d articles, %d new (skipping %d duplicates)",
+            "Fetched %d articles total, %d new (skipping %d duplicates)",
             len(raw_articles), len(new_articles), len(raw_articles) - len(new_articles),
         )
 

@@ -22,6 +22,7 @@ import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from config import settings
+from core.alerts import send_signal_alert
 from core.db import Database
 from core.news import NewsClient
 from core.sentiment import SentimentAnalyzer
@@ -92,6 +93,7 @@ class BotScheduler:
             rowid = self._db.save_signal(sig)
             if rowid:
                 saved_signals += 1
+                send_signal_alert(sig)
 
         logger.info(
             "Poll complete: saved %d articles, %d signals",

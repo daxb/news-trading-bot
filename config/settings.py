@@ -47,3 +47,7 @@ MAX_TOTAL_EXPOSURE_PCT = float(os.getenv('MAX_TOTAL_EXPOSURE_PCT', 0.60))
 STOP_LOSS_PCT = float(os.getenv('STOP_LOSS_PCT', 0.02))
 MAX_DAILY_LOSS_PCT = float(os.getenv('MAX_DAILY_LOSS_PCT', 0.05))
 MAX_TRADES_PER_DAY = int(os.getenv('MAX_TRADES_PER_DAY', 10))
+
+# Telegram alerts
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')

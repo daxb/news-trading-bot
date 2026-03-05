@@ -11,7 +11,10 @@ python scripts/run_bot.py &
 BOT_PID=$!
 
 echo "Starting dashboard..."
-streamlit run dashboard/app.py &
+streamlit run dashboard/app.py \
+    --server.address=0.0.0.0 \
+    --server.port=8501 \
+    --server.headless=true &
 DASH_PID=$!
 
 # If either process dies, kill the other and exit

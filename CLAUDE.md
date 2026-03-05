@@ -32,27 +32,45 @@ Data Ingestion → NLP/Sentiment → Signal Generation → Order Execution → R
 ```
 news-trading-bot/
 ├── CLAUDE.md                    # This file
+├── README.md                    # Setup and usage docs
 ├── .env                         # API keys (NEVER committed to git)
 ├── .gitignore
-├── pyproject.toml
+├── .dockerignore
 ├── requirements.txt
+├── Dockerfile                   # Single-image build (bot + dashboard)
+├── docker-compose.yml           # Local multi-container dev setup
+├── fly.toml                     # Fly.io deployment config
 ├── config/
-│   └── settings.py              # Loads .env, defines thresholds + risk limits
+│   └── settings.py              # Loads .env, defines all thresholds + risk limits
 ├── core/                        # Core pipeline modules (flat, not nested)
+│   ├── alerts.py                # Telegram signal + exit notifications
+│   ├── backtester.py            # Walk-forward backtest engine (yfinance)
 │   ├── broker.py                # Alpaca wrapper (account, positions, orders)
-│   ├── macro.py                 # FRED wrapper (key indicators, series)
-│   └── news.py                  # Finnhub wrapper (general + company news)
-│   # PLANNED:
-│   ├── sentiment.py             # FinBERT sentiment scoring
-│   ├── signal_gen.py            # Event→trade rules engine
-│   ├── risk_manager.py          # Position sizing, circuit breakers
 │   ├── db.py                    # SQLite schema + repository
-│   └── scheduler.py             # APScheduler polling loop
+│   ├── dedup.py                 # Jaccard headline similarity deduplication
+│   ├── exit_manager.py          # Trailing stops + time-based exits
+│   ├── forex.py                 # OANDA wrapper (forex + commodities)
+│   ├── macro.py                 # FRED wrapper (key indicators, series)
+│   ├── macro_context.py         # Regime-aware signal confidence adjustment
+│   ├── news.py                  # Finnhub wrapper (general + company news)
+│   ├── risk_manager.py          # Position sizing, daily loss limit, trade cap
+│   ├── rss.py                   # Concurrent RSS feed fetcher
+│   ├── scheduler.py             # APScheduler polling loop (full pipeline)
+│   ├── sentiment.py             # FinBERT sentiment scoring
+│   └── signal_gen.py            # Rule-based event→trade engine (11 themes)
+├── dashboard/
+│   └── app.py                   # Streamlit monitoring dashboard
 ├── scripts/
-│   └── run_bot.py               # Main entry point (planned)
+│   ├── backtest.py              # Walk-forward backtest CLI
+│   ├── run_bot.py               # Main bot entry point
+│   └── start.sh                 # Docker startup script (bot + dashboard)
 ├── tests/
-│   └── test_connectivity.py     # Integration smoke tests (Finnhub, FRED, Alpaca)
-└── data/                        # SQLite DB, CSV cache (gitignored)
+│   ├── test_connectivity.py     # Integration smoke tests (Finnhub, FRED, Alpaca)
+│   ├── test_db.py
+│   ├── test_scheduler.py
+│   ├── test_sentiment.py
+│   └── test_signal_gen.py
+└── data/                        # SQLite DB (gitignored)
 ```
 
 ## Tech Stack
@@ -106,7 +124,7 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 
 ## Phased Roadmap
 
-### Phase 1 — MVP (Weeks 1–2) ← CURRENT PHASE
+### Phase 1 — MVP ✅ COMPLETE
 - [x] Project setup, GitHub repo, virtual environment
 - [x] Install core dependencies (finnhub, fredapi, alpaca-py, dotenv)
 - [x] API key registration (Finnhub, FRED, Alpaca)
@@ -119,26 +137,30 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - [x] FinBERT sentiment scoring (`core/sentiment.py`)
 - [x] Basic rules engine (event → SPY paper trades) (`core/signal_gen.py`)
 - [x] APScheduler polling loop (`core/scheduler.py` + `scripts/run_bot.py`)
-- [ ] Telegram alerts
+- [x] Telegram alerts (`core/alerts.py` — signal + exit notifications)
 
-### Phase 2 — Multi-Asset Expansion (Weeks 3–4)
+### Phase 2 — Multi-Asset Expansion ✅ COMPLETE
 - [ ] Add GDELT and NewsAPI for broader news coverage (Reddit removed — paid API, sarcasm/noise issues)
-- [ ] OANDA integration for forex paper trading
-- [ ] More event→trade rules (forex pairs, gold, oil)
-- [ ] News deduplication
-- [ ] Streamlit monitoring dashboard
-- [ ] Risk controls (max position size, daily loss limit)
+- [x] OANDA integration for forex paper trading (`core/forex.py`)
+- [x] More event→trade rules: forex pairs (EUR/USD), gold (XAU/USD), oil (BCO/USD)
+- [x] News deduplication — Jaccard similarity across sources (`core/dedup.py`)
+- [x] Streamlit monitoring dashboard (`dashboard/app.py`)
+- [x] Risk controls — position sizing, daily loss limit (`core/risk_manager.py`)
+- [x] Macro context filter — FRED-based regime-aware confidence adjustment (`core/macro_context.py`)
+- [x] Concurrent news fetching — ThreadPoolExecutor in scheduler + RSS client
+- [x] RSS feeds — BBC, CNBC, MarketWatch, Yahoo Finance (`core/rss.py`)
 
-### Phase 3 — Harden & Validate (Months 2–3)
-- [ ] Walk-forward backtesting
-- [ ] Multi-source signal confirmation
-- [ ] Trailing stops and time-based exits
-- [ ] Async news fetching
-- [ ] Dockerize the application
-- [ ] Structured logging + auto-restart
+### Phase 3 — Harden & Validate ✅ COMPLETE
+- [x] Walk-forward backtesting (`core/backtester.py` + `scripts/backtest.py`)
+- [ ] Multi-source signal confirmation (dedup implemented; multi-source voting not yet)
+- [x] Trailing stops and time-based exits (`core/exit_manager.py`)
+- [x] Async news fetching (ThreadPoolExecutor in `core/scheduler.py` and `core/rss.py`)
+- [x] Dockerize the application (`Dockerfile`, `docker-compose.yml`, `scripts/start.sh`)
+- [x] Structured logging + auto-restart (Python `logging` throughout; `restart: unless-stopped` in compose)
 
-### Phase 4 — Go Live (Month 3+)
-- [ ] Deploy to Oracle Cloud (free ARM instance)
+### Phase 4 — Go Live ← CURRENT PHASE
+- [x] Deploy to Fly.io (switched from Oracle Cloud — free tier, simpler ops) (`fly.toml`)
+- [ ] Confirm Fly.io deployment health (dashboard reachable, bot running)
 - [ ] Live trading with minimum capital ($500–2,000)
 - [ ] Parallel paper trading for comparison
 - [ ] ML-based signal refinement (gradient boosting)

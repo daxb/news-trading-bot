@@ -1,0 +1,31 @@
+services:
+
+  bot:
+    build: .
+    command: python scripts/run_bot.py
+    env_file: .env
+    volumes:
+      - ./data:/app/data        # SQLite DB persists on the host
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  dashboard:
+    build: .
+    command: streamlit run dashboard/app.py
+    env_file: .env
+    volumes:
+      - ./data:/app/data        # reads the same DB as the bot
+    ports:
+      - "8501:8501"
+    depends_on:
+      - bot
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

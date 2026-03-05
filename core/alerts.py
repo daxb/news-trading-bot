@@ -27,13 +27,21 @@ def send_signal_alert(signal: dict) -> None:
     confidence = signal.get("confidence", 0.0)
     theme = signal.get("theme", "")
     rationale = signal.get("rationale", "")
+    qty = signal.get("qty")
+    order_id = signal.get("order_id")
+
+    header = f"*{action} {ticker}*"
+    if qty:
+        header += f" — {qty} shares"
 
     text = (
-        f"*{action} {ticker}*\n"
+        f"{header}\n"
         f"Theme: `{theme}`\n"
         f"Confidence: `{confidence:.2f}`\n"
         f"{rationale}"
     )
+    if order_id:
+        text += f"\nOrder: `{order_id}`"
 
     try:
         resp = requests.post(

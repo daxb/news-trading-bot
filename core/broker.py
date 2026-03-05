@@ -9,6 +9,8 @@ import logging
 import os
 from typing import Optional
 
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockLatestTradeRequest
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
@@ -38,6 +40,10 @@ class BrokerClient:
             api_key=settings.ALPACA_API_KEY,
             secret_key=settings.ALPACA_SECRET_KEY,
             paper=settings.PAPER_TRADING,
+        )
+        self._data_client = StockHistoricalDataClient(
+            api_key=settings.ALPACA_API_KEY,
+            secret_key=settings.ALPACA_SECRET_KEY,
         )
         mode = "paper" if settings.PAPER_TRADING else "LIVE"
         logger.info("BrokerClient initialized in %s mode", mode)
@@ -123,6 +129,32 @@ class BrokerClient:
         except Exception:
             logger.exception("Failed to submit order: %s %s %s", side, qty, ticker)
             return {}
+
+    def get_position(self, ticker: str) -> dict | None:
+        """Return the open position for a ticker, or None if not held."""
+        try:
+            pos = self._client.get_open_position(ticker.upper())
+            return {
+                "symbol": str(pos.symbol),
+                "qty": float(pos.qty),
+                "side": str(pos.side),
+                "market_value": float(pos.market_value),
+            }
+        except Exception:
+            # 404 means no position — not a real error
+            return None
+
+    def get_latest_price(self, ticker: str) -> float | None:
+        """Return the latest trade price for a ticker, or None on failure."""
+        try:
+            request = StockLatestTradeRequest(symbol_or_symbols=ticker.upper())
+            trades = self._data_client.get_stock_latest_trade(request)
+            price = float(trades[ticker.upper()].price)
+            logger.debug("Latest price %s: %.4f", ticker.upper(), price)
+            return price
+        except Exception:
+            logger.exception("Failed to get latest price for %s", ticker.upper())
+            return None
 
     def get_orders(self, status: str = "all") -> list[dict]:
         """Fetch orders filtered by status ('open', 'closed', 'all')."""

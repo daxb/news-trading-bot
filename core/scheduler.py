@@ -2,29 +2,30 @@
 APScheduler polling loop for the Macro Trader bot.
 
 Wires the full pipeline together:
-  NewsClient → SentimentAnalyzer → SignalGenerator → Database
+  NewsClient → SentimentAnalyzer → SignalGenerator → RiskManager → BrokerClient → Database
 
 Every poll interval:
   1. Fetch latest general news from Finnhub
   2. Skip articles already in the DB (dedup by article_id)
   3. Score new articles with FinBERT
   4. Run the rules engine to generate signals
-  5. Persist scored articles and signals to SQLite
-
-Signals are written to the DB with status='pending'. The execution
-layer (Phase 2) will consume them from there.
+  5. Persist signals; for each one run risk checks and execute via Alpaca
+  6. Send Telegram alert on successful execution
 """
 
 import logging
 import signal as _signal
 import threading
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from config import settings
 from core.alerts import send_signal_alert
+from core.broker import BrokerClient
 from core.db import Database
 from core.news import NewsClient
+from core.risk_manager import RiskManager
 from core.sentiment import SentimentAnalyzer
 from core.signal_gen import SignalGenerator
 
@@ -40,6 +41,8 @@ class BotScheduler:
         self._news = NewsClient()
         self._sentiment = SentimentAnalyzer()
         self._signals = SignalGenerator()
+        self._broker = BrokerClient()
+        self._risk = RiskManager(self._broker, self._db)
         self._scheduler = BackgroundScheduler(daemon=True)
         self._stop_event = threading.Event()
         logger.info("Pipeline ready.")
@@ -81,23 +84,56 @@ class BotScheduler:
         # Generate signals
         signals = self._signals.generate_signals(scored)
 
-        # Persist
+        # Persist articles
         saved_articles = 0
         for article in scored:
             rowid = self._db.save_article(article)
             if rowid:
                 saved_articles += 1
 
+        # Persist signals, run risk checks, execute approved orders
         saved_signals = 0
+        executed_signals = 0
         for sig in signals:
             rowid = self._db.save_signal(sig)
-            if rowid:
-                saved_signals += 1
-                send_signal_alert(sig)
+            if not rowid:
+                continue
+            saved_signals += 1
+
+            approved, reason = self._risk.can_trade()
+            if not approved:
+                logger.info("Signal skipped — risk check: %s", reason)
+                self._db.update_signal_status(rowid, "skipped")
+                continue
+
+            qty = self._risk.position_qty(sig["ticker"])
+            if qty <= 0:
+                logger.info("Signal skipped — could not size position for %s", sig["ticker"])
+                self._db.update_signal_status(rowid, "skipped")
+                continue
+
+            # Don't short-sell: skip sell signals if we have no position
+            if sig["action"] == "sell":
+                position = self._broker.get_position(sig["ticker"])
+                if not position:
+                    logger.info(
+                        "Signal skipped — no position to sell for %s", sig["ticker"]
+                    )
+                    self._db.update_signal_status(rowid, "skipped")
+                    continue
+
+            order = self._broker.submit_market_order(sig["ticker"], qty, sig["action"])
+            if order:
+                executed_at = datetime.now(timezone.utc).isoformat()
+                self._db.update_signal_status(rowid, "executed", executed_at)
+                executed_signals += 1
+                send_signal_alert({**sig, "qty": qty, "order_id": order.get("id")})
+            else:
+                self._db.update_signal_status(rowid, "skipped")
 
         logger.info(
-            "Poll complete: saved %d articles, %d signals",
-            saved_articles, saved_signals,
+            "Poll complete: saved %d articles, %d signals, %d executed",
+            saved_articles, saved_signals, executed_signals,
         )
 
     # ------------------------------------------------------------------

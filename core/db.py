@@ -280,6 +280,19 @@ class Database:
             logger.exception("Failed to update signal id=%d", signal_id)
             return False
 
+    def count_executed_today(self) -> int:
+        """Count signals executed today (UTC date)."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        try:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM signals WHERE status = 'executed' AND created_at LIKE ?",
+                (f"{today}%",),
+            ).fetchone()
+            return row[0] if row else 0
+        except Exception:
+            logger.exception("Failed to count today's executed signals")
+            return 0
+
     def close(self) -> None:
         """Close the database connection."""
         self._conn.close()

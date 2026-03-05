@@ -24,6 +24,7 @@ from config import settings
 from core.alerts import send_signal_alert
 from core.broker import BrokerClient
 from core.db import Database
+from core.dedup import deduplicate
 from core.macro import MacroClient
 from core.macro_context import MacroContext
 from core.news import NewsClient
@@ -88,11 +89,19 @@ class BotScheduler:
                 new_articles.append(a)
 
         logger.info(
-            "Fetched %d articles total, %d new (skipping %d duplicates)",
+            "Fetched %d articles total, %d new after ID-dedup (skipping %d)",
             len(raw_articles), len(new_articles), len(raw_articles) - len(new_articles),
         )
 
         if not new_articles:
+            return
+
+        # Similarity dedup — drop cross-source near-duplicates
+        recent_headlines = self._db.get_recent_headlines(hours=settings.DEDUP_WINDOW_HOURS)
+        new_articles = deduplicate(new_articles, recent_headlines)
+
+        if not new_articles:
+            logger.info("All articles were near-duplicates — nothing to process.")
             return
 
         # Tick macro context — refreshes FRED data every N cycles

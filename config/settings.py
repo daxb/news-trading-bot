@@ -52,6 +52,10 @@ MAX_TRADES_PER_DAY = int(os.getenv('MAX_TRADES_PER_DAY', 10))
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 
+# News deduplication
+DEDUP_SIMILARITY_THRESHOLD = float(os.getenv('DEDUP_SIMILARITY_THRESHOLD', 0.5))
+DEDUP_WINDOW_HOURS = int(os.getenv('DEDUP_WINDOW_HOURS', 4))
+
 # Macro context — FRED indicator thresholds and refresh cadence
 MACRO_REFRESH_CYCLES = int(os.getenv('MACRO_REFRESH_CYCLES', 12))  # every ~1 hr at 5 min polls
 FEDFUNDS_HIGH = float(os.getenv('FEDFUNDS_HIGH', 4.0))   # rates considered elevated

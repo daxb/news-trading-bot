@@ -160,6 +160,20 @@ class Database:
             logger.exception("Failed to check article existence for id=%s", article_id)
             return False
 
+    def get_recent_headlines(self, hours: int = 4) -> list[str]:
+        """Return headlines stored in the last `hours` hours (UTC)."""
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        try:
+            rows = self._conn.execute(
+                "SELECT headline FROM articles WHERE fetched_at >= ? AND headline != ''",
+                (cutoff,),
+            ).fetchall()
+            return [r["headline"] for r in rows]
+        except Exception:
+            logger.exception("Failed to fetch recent headlines")
+            return []
+
     def get_articles(self, limit: int = 50, sentiment_label: str | None = None) -> list[dict]:
         """
         Fetch stored articles, newest first.

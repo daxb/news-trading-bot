@@ -48,6 +48,11 @@ STOP_LOSS_PCT = float(os.getenv('STOP_LOSS_PCT', 0.02))
 MAX_DAILY_LOSS_PCT = float(os.getenv('MAX_DAILY_LOSS_PCT', 0.05))
 MAX_TRADES_PER_DAY = int(os.getenv('MAX_TRADES_PER_DAY', 10))
 
+# OANDA forex (Phase 2)
+OANDA_API_KEY = os.getenv('OANDA_API_KEY', '')
+OANDA_ACCOUNT_ID = os.getenv('OANDA_ACCOUNT_ID', '')
+OANDA_ENVIRONMENT = os.getenv('OANDA_ENVIRONMENT', 'practice')  # 'practice' or 'live'
+
 # Telegram alerts
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')

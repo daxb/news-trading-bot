@@ -120,6 +120,55 @@ _RULES: list[dict] = [
         "ticker": "SPY",
         "description": "Broad market momentum supports further upside",
     },
+
+    # ------------------------------------------------------------------
+    # Forex rules (OANDA instruments)
+    # ------------------------------------------------------------------
+    {
+        "theme": "usd_strength",
+        "keywords": [
+            "dollar surges", "dollar rises", "dollar strengthens",
+            "usd rally", "strong dollar", "dollar dominance",
+            "dollar index rises", "dxy rises",
+        ],
+        "actions": {"positive": "sell", "negative": "buy", "neutral": None},
+        "confidence_mult": 0.80,
+        "ticker": "EUR_USD",
+        "description": "Strong USD is bearish for EUR/USD",
+    },
+    {
+        "theme": "usd_weakness",
+        "keywords": [
+            "dollar falls", "dollar weakens", "dollar drops",
+            "weak dollar", "dollar selloff", "dollar index falls", "dxy falls",
+        ],
+        "actions": {"positive": "buy", "negative": "sell", "neutral": None},
+        "confidence_mult": 0.80,
+        "ticker": "EUR_USD",
+        "description": "Weak USD is bullish for EUR/USD",
+    },
+    {
+        "theme": "gold_safe_haven",
+        "keywords": [
+            "gold rises", "gold surges", "gold rally", "gold hits",
+            "safe haven demand", "flight to gold", "bullion rises",
+        ],
+        "actions": {"positive": "buy", "negative": "sell", "neutral": None},
+        "confidence_mult": 0.75,
+        "ticker": "XAU_USD",
+        "description": "Safe-haven demand drives gold higher",
+    },
+    {
+        "theme": "oil_demand",
+        "keywords": [
+            "oil rises", "crude rises", "oil prices surge", "crude rally",
+            "opec cuts", "supply cut", "oil demand", "energy prices rise",
+        ],
+        "actions": {"positive": "buy", "negative": "sell", "neutral": None},
+        "confidence_mult": 0.75,
+        "ticker": "BCO_USD",
+        "description": "Supply constraints or demand surge drives crude higher",
+    },
 ]
 
 

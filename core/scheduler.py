@@ -25,6 +25,7 @@ from core.alerts import send_signal_alert
 from core.broker import BrokerClient
 from core.db import Database
 from core.dedup import deduplicate
+from core.forex import ForexBroker
 from core.macro import MacroClient
 from core.macro_context import MacroContext
 from core.news import NewsClient
@@ -48,6 +49,16 @@ class BotScheduler:
         self._signals = SignalGenerator()
         self._broker = BrokerClient()
         self._risk = RiskManager(self._broker, self._db)
+
+        # OANDA — optional; gracefully disabled if keys are absent
+        self._forex: ForexBroker | None = None
+        self._forex_risk: RiskManager | None = None
+        if settings.OANDA_API_KEY and settings.OANDA_ACCOUNT_ID:
+            self._forex = ForexBroker()
+            self._forex_risk = RiskManager(self._forex, self._db)
+        else:
+            logger.info("OANDA not configured — forex signals will be skipped")
+
         self._macro_ctx = MacroContext(MacroClient())
         self._scheduler = BackgroundScheduler(daemon=True)
         self._stop_event = threading.Event()
@@ -130,21 +141,37 @@ class BotScheduler:
                 continue
             saved_signals += 1
 
-            approved, reason = self._risk.can_trade()
+            # Route to the correct broker based on instrument format
+            is_forex = "_" in sig["ticker"]
+            if is_forex:
+                if not self._forex or not self._forex_risk:
+                    logger.info(
+                        "Signal skipped — OANDA not configured for %s", sig["ticker"]
+                    )
+                    self._db.update_signal_status(rowid, "skipped")
+                    continue
+                risk   = self._forex_risk
+                broker = self._forex
+            else:
+                risk   = self._risk
+                broker = self._broker
+
+            approved, reason = risk.can_trade()
             if not approved:
                 logger.info("Signal skipped — risk check: %s", reason)
                 self._db.update_signal_status(rowid, "skipped")
                 continue
 
-            qty = self._risk.position_qty(sig["ticker"])
+            qty = risk.position_qty(sig["ticker"])
             if qty <= 0:
                 logger.info("Signal skipped — could not size position for %s", sig["ticker"])
                 self._db.update_signal_status(rowid, "skipped")
                 continue
 
-            # Don't short-sell: skip sell signals if we have no position
-            if sig["action"] == "sell":
-                position = self._broker.get_position(sig["ticker"])
+            # Equity only: don't short-sell if we have no position
+            # Forex allows shorting natively so this check is skipped
+            if not is_forex and sig["action"] == "sell":
+                position = broker.get_position(sig["ticker"])
                 if not position:
                     logger.info(
                         "Signal skipped — no position to sell for %s", sig["ticker"]
@@ -152,7 +179,7 @@ class BotScheduler:
                     self._db.update_signal_status(rowid, "skipped")
                     continue
 
-            order = self._broker.submit_market_order(sig["ticker"], qty, sig["action"])
+            order = broker.submit_market_order(sig["ticker"], qty, sig["action"])
             if order:
                 executed_at = datetime.now(timezone.utc).isoformat()
                 self._db.update_signal_status(rowid, "executed", executed_at)

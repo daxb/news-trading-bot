@@ -16,6 +16,7 @@ Every poll interval:
 import logging
 import signal as _signal
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -74,17 +75,23 @@ class BotScheduler:
         """Single poll cycle — called by APScheduler on the interval."""
         logger.info("Poll cycle starting …")
 
-        # Fetch from all sources
+        # Fetch from all sources concurrently
         raw_articles: list[dict] = []
-        try:
-            raw_articles.extend(self._news.get_general_news())
-        except Exception:
-            logger.exception("Finnhub fetch failed — continuing with RSS only")
-
-        try:
-            raw_articles.extend(self._rss.get_articles())
-        except Exception:
-            logger.exception("RSS fetch failed — continuing with Finnhub only")
+        sources = {
+            "finnhub": self._news.get_general_news,
+            "rss":     self._rss.get_articles,
+        }
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_to_name = {
+                executor.submit(fn): name
+                for name, fn in sources.items()
+            }
+            for future in as_completed(future_to_name):
+                name = future_to_name[future]
+                try:
+                    raw_articles.extend(future.result())
+                except Exception:
+                    logger.exception("%s fetch failed — skipping", name)
 
         if not raw_articles:
             logger.info("No articles returned this cycle.")

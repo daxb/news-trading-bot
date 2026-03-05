@@ -15,10 +15,13 @@ the same SQLite column without collision risk.
 import logging
 import zlib
 from calendar import timegm
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from datetime import datetime, timezone
 from time import struct_time
 
 import feedparser
+
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -86,37 +89,46 @@ def _normalize_entry(entry: feedparser.FeedParserDict, source: str) -> dict:
 class RSSClient:
     """Fetches and normalises articles from all configured RSS feeds."""
 
+    def _fetch_feed(self, feed: dict) -> list[dict]:
+        """Fetch and normalise a single feed. Runs in a thread pool worker."""
+        name = feed["name"]
+        url  = feed["url"]
+        parsed = feedparser.parse(url)
+        if parsed.bozo and not parsed.entries:
+            logger.warning("RSS feed '%s' parse error — skipping", name)
+            return []
+        articles = [
+            _normalize_entry(e, name)
+            for e in parsed.entries
+            if e.get("link")
+        ]
+        logger.debug("RSS '%s': fetched %d articles", name, len(articles))
+        return articles
+
     def get_articles(self) -> list[dict]:
         """
-        Fetch all configured feeds and return a flat list of normalised articles.
+        Fetch all configured feeds concurrently and return a flat list.
 
-        Feeds that fail to load are skipped with a warning — one bad feed
-        should never block the rest.
+        Each feed runs in its own thread. Feeds that time out or error are
+        skipped — one bad feed never delays the rest.
         """
         all_articles: list[dict] = []
+        timeout = settings.NEWS_FETCH_TIMEOUT_SECONDS
 
-        for feed in _FEEDS:
-            name = feed["name"]
-            url = feed["url"]
-            try:
-                parsed = feedparser.parse(url)
-                if parsed.bozo and not parsed.entries:
-                    logger.warning(
-                        "RSS feed '%s' returned a parse error and no entries — skipping",
-                        name,
-                    )
-                    continue
-
-                articles = [
-                    _normalize_entry(e, name)
-                    for e in parsed.entries
-                    if e.get("link")  # skip entries with no URL (no stable ID)
-                ]
-                logger.debug("RSS '%s': fetched %d articles", name, len(articles))
-                all_articles.extend(articles)
-
-            except Exception:
-                logger.exception("Failed to fetch RSS feed '%s'", name)
+        with ThreadPoolExecutor(max_workers=len(_FEEDS)) as executor:
+            future_to_feed = {
+                executor.submit(self._fetch_feed, feed): feed
+                for feed in _FEEDS
+            }
+            for future in as_completed(future_to_feed, timeout=timeout * 2):
+                feed = future_to_feed[future]
+                try:
+                    articles = future.result(timeout=timeout)
+                    all_articles.extend(articles)
+                except TimeoutError:
+                    logger.warning("RSS feed '%s' timed out after %ds", feed["name"], timeout)
+                except Exception:
+                    logger.exception("RSS feed '%s' failed", feed["name"])
 
         logger.info("RSS total: fetched %d articles from %d feeds", len(all_articles), len(_FEEDS))
         return all_articles

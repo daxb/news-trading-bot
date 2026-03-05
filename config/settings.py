@@ -59,6 +59,9 @@ OANDA_ENVIRONMENT = os.getenv('OANDA_ENVIRONMENT', 'practice')  # 'practice' or 
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 
+# News fetching
+NEWS_FETCH_TIMEOUT_SECONDS = int(os.getenv('NEWS_FETCH_TIMEOUT_SECONDS', 10))
+
 # News deduplication
 DEDUP_SIMILARITY_THRESHOLD = float(os.getenv('DEDUP_SIMILARITY_THRESHOLD', 0.5))
 DEDUP_WINDOW_HOURS = int(os.getenv('DEDUP_WINDOW_HOURS', 4))

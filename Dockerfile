@@ -36,3 +36,8 @@ COPY . .
 
 # Ensure the data directory exists inside the image
 RUN mkdir -p /app/data
+
+# Make startup script executable
+RUN chmod +x scripts/start.sh
+
+CMD ["bash", "scripts/start.sh"]

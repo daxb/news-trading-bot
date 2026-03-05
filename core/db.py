@@ -232,6 +232,29 @@ class Database:
             )
             return None
 
+    def get_signals(self, limit: int = 100, status: str | None = None) -> list[dict]:
+        """
+        Fetch signals, newest first.
+
+        Args:
+            limit:  Max rows to return.
+            status: Optional filter — 'pending', 'executed', 'skipped', 'expired'.
+        """
+        try:
+            if status:
+                rows = self._conn.execute(
+                    "SELECT * FROM signals WHERE status = ? ORDER BY id DESC LIMIT ?",
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM signals ORDER BY id DESC LIMIT ?", (limit,)
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            logger.exception("Failed to fetch signals")
+            return []
+
     def get_pending_signals(self) -> list[dict]:
         """Return all signals with status='pending', oldest first."""
         try:

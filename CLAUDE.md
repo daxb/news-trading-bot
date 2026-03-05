@@ -20,12 +20,12 @@ Data Ingestion → NLP/Sentiment → Signal Generation → Order Execution → R
 
 ### Pipeline Stages
 
-1. **Data Ingestion**: Finnhub API, RSS feeds (BBC, AP), GDELT, Reddit `.json` endpoints
+1. **Data Ingestion**: Finnhub API, RSS feeds (BBC, AP), GDELT, NewsAPI (free tier)
 2. **NLP/Sentiment**: FinBERT (`ProsusAI/finbert`) for sentiment, spaCy for NER, keyword-based topic classification
 3. **Signal Generation**: Rule-based event→trade mapping with confidence scoring
 4. **Execution**: Alpaca (equities), OANDA (forex), IBKR (commodities/futures)
 5. **Risk Management**: Position sizing (quarter-Kelly + ATR), circuit breakers, time-based stops
-6. **Monitoring**: Telegram alerts, Streamlit dashboard, structured logging
+6. **Monitoring**: Telegram alerts (preferred), Streamlit dashboard, structured logging
 
 ## Project Structure
 
@@ -34,35 +34,24 @@ news-trading-bot/
 ├── CLAUDE.md                    # This file
 ├── .env                         # API keys (NEVER committed to git)
 ├── .gitignore
+├── pyproject.toml
 ├── requirements.txt
 ├── config/
-│   └── settings.py              # Loads .env, defines thresholds
-├── src/
-│   ├── ingestion/
-│   │   ├── news_fetcher.py      # Finnhub + RSS + GDELT polling
-│   │   └── price_fetcher.py     # yfinance / broker streaming
-│   ├── nlp/
-│   │   ├── sentiment.py         # FinBERT sentiment scoring
-│   │   ├── preprocessor.py      # Text cleaning, deduplication
-│   │   └── ner.py               # spaCy entity extraction
-│   ├── strategy/
-│   │   ├── signal_gen.py        # Event→trade rules engine
-│   │   └── filters.py           # Confidence thresholds, confirmations
-│   ├── execution/
-│   │   ├── broker.py            # Unified broker interface
-│   │   └── paper_trader.py      # Paper trading wrapper
-│   ├── risk/
-│   │   └── risk_manager.py      # Position sizing, circuit breakers
-│   ├── monitoring/
-│   │   ├── telegram_bot.py      # Trade alerts
-│   │   └── dashboard.py         # Streamlit dashboard
-│   └── db/
-│       ├── models.py            # SQLite schema
-│       └── repository.py        # DB read/write operations
+│   └── settings.py              # Loads .env, defines thresholds + risk limits
+├── core/                        # Core pipeline modules (flat, not nested)
+│   ├── broker.py                # Alpaca wrapper (account, positions, orders)
+│   ├── macro.py                 # FRED wrapper (key indicators, series)
+│   └── news.py                  # Finnhub wrapper (general + company news)
+│   # PLANNED:
+│   ├── sentiment.py             # FinBERT sentiment scoring
+│   ├── signal_gen.py            # Event→trade rules engine
+│   ├── risk_manager.py          # Position sizing, circuit breakers
+│   ├── db.py                    # SQLite schema + repository
+│   └── scheduler.py             # APScheduler polling loop
 ├── scripts/
-│   ├── run_bot.py               # Main entry point with APScheduler
-│   └── backtest.py              # Historical strategy testing
+│   └── run_bot.py               # Main entry point (planned)
 ├── tests/
+│   └── test_connectivity.py     # Integration smoke tests (Finnhub, FRED, Alpaca)
 └── data/                        # SQLite DB, CSV cache (gitignored)
 ```
 
@@ -77,7 +66,7 @@ news-trading-bot/
 | RSS Parsing       | `feedparser`                            | 6.0+      |
 | Macro Data        | `fredapi`                               | 0.5+      |
 | Market Data       | `yfinance`                              | 1.2+      |
-| Equity Broker     | `alpaca-py`                             | (add later)|
+| Equity Broker     | `alpaca-py`                             | 0.26+     |
 | Forex Broker      | `oandapyV20`                            | (add later)|
 | Scheduling        | `apscheduler`                           | 3.11+     |
 | Database          | SQLite (MVP) → PostgreSQL (scale)       | —         |
@@ -111,7 +100,7 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 | Finnhub       | Financial news, market data       | Free  | 60 req/min        |
 | RSS (BBC, AP) | Geopolitical headlines            | Free  | No limit          |
 | GDELT         | Global event database             | Free  | No key needed     |
-| Reddit .json  | Subreddit sentiment (WSB, etc.)   | Free  | ~10 req/min       |
+| NewsAPI       | Broad English-language news       | Free  | 100 req/day       |
 | FRED          | 800K+ economic time series        | Free  | 120 req/min       |
 | yfinance      | Stock/commodity/forex prices      | Free  | Unofficial        |
 
@@ -119,18 +108,21 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 
 ### Phase 1 — MVP (Weeks 1–2) ← CURRENT PHASE
 - [x] Project setup, GitHub repo, virtual environment
-- [x] Install core dependencies
+- [x] Install core dependencies (finnhub, fredapi, alpaca-py, dotenv)
 - [x] API key registration (Finnhub, FRED, Alpaca)
-- [ ] `news_fetcher.py` — pull headlines from Finnhub + RSS
-- [ ] SQLite storage for articles
-- [ ] FinBERT sentiment scoring
-- [ ] Basic rules engine (event → SPY paper trades)
-- [ ] Alpaca paper trading integration
-- [ ] APScheduler for automated polling
+- [x] `core/news.py` — Finnhub general + company news, normalized schema
+- [x] `core/macro.py` — FRED key indicators + series fetching
+- [x] `core/broker.py` — Alpaca paper trading (account, positions, orders)
+- [x] `config/settings.py` — env loading, risk thresholds, paper trading gate
+- [x] `tests/test_connectivity.py` — integration smoke tests for all APIs
+- [x] SQLite storage for articles and signals (`core/db.py`)
+- [x] FinBERT sentiment scoring (`core/sentiment.py`)
+- [x] Basic rules engine (event → SPY paper trades) (`core/signal_gen.py`)
+- [x] APScheduler polling loop (`core/scheduler.py` + `scripts/run_bot.py`)
 - [ ] Telegram alerts
 
 ### Phase 2 — Multi-Asset Expansion (Weeks 3–4)
-- [ ] Add GDELT and Reddit `.json` for broader news coverage
+- [ ] Add GDELT and NewsAPI for broader news coverage (Reddit removed — paid API, sarcasm/noise issues)
 - [ ] OANDA integration for forex paper trading
 - [ ] More event→trade rules (forex pairs, gold, oil)
 - [ ] News deduplication
@@ -177,7 +169,6 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - Pattern Day Trader rule: 4+ day trades in 5 days → $25K equity required (equities only)
 - Consider Section 475(f) Mark-to-Market election for tax purposes
 - Wash sale rule is a major trap for algo traders — track carefully
-- Reddit data: use public `.json` endpoints only, respect rate limits
 
 ## Conventions
 
@@ -186,4 +177,4 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - All config in `config/settings.py`, no hardcoded keys or thresholds
 - Logging via Python's `logging` module (not print statements)
 - Snake_case for files/functions, PascalCase for classes
-- Tests in `tests/` mirroring `src/` structure
+- Tests in `tests/` mirroring `core/` structure

@@ -1,0 +1,9 @@
+alpaca-py==0.26.0
+finnhub-python==2.4.27
+fredapi==0.5.2
+python-dotenv==1.0.0
+requests==2.32.3
+pytest==7.4.4
+torch==2.10.0
+transformers==5.2.0
+apscheduler==3.11.2

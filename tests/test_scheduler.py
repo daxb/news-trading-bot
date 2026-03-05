@@ -1,0 +1,187 @@
+"""
+Unit tests for core/scheduler.py — BotScheduler poll logic.
+
+All external collaborators (NewsClient, SentimentAnalyzer, SignalGenerator,
+Database) are replaced with fakes so these tests are fast and require no
+API keys, no network, and no ML models.
+
+Run with:
+    python -m pytest tests/test_scheduler.py -v
+"""
+
+import pytest
+
+
+# ---------------------------------------------------------------------------
+# Fakes / stubs
+# ---------------------------------------------------------------------------
+
+class FakeNews:
+    def __init__(self, articles=None):
+        self.articles = articles or []
+        self.call_count = 0
+
+    def get_general_news(self):
+        self.call_count += 1
+        return self.articles
+
+
+class FakeSentiment:
+    """Passes articles through, adding fixed sentiment fields."""
+    def score_articles(self, articles):
+        return [
+            {**a, "sentiment_label": "positive", "sentiment_score": 0.9}
+            for a in articles
+        ]
+
+
+class FakeSignalGen:
+    def __init__(self, signals=None):
+        self._signals = signals or []
+
+    def generate_signals(self, articles):
+        return self._signals
+
+
+class FakeDB:
+    def __init__(self, existing_ids=None):
+        self._existing = set(existing_ids or [])
+        self.saved_articles = []
+        self.saved_signals = []
+
+    def article_exists(self, article_id):
+        return article_id in self._existing
+
+    def save_article(self, article):
+        self.saved_articles.append(article)
+        return len(self.saved_articles)  # fake rowid
+
+    def save_signal(self, signal):
+        self.saved_signals.append(signal)
+        return len(self.saved_signals)
+
+    def close(self):
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Helper: build a scheduler with injected fakes
+# ---------------------------------------------------------------------------
+
+def _make_scheduler(news=None, sentiment=None, signals=None, db=None):
+    """Construct a BotScheduler with all components replaced by fakes."""
+    from core.scheduler import BotScheduler
+    bot = BotScheduler.__new__(BotScheduler)  # skip __init__ (would load real models)
+    import threading
+    bot._stop_event = threading.Event()
+    bot._news = news or FakeNews()
+    bot._sentiment = sentiment or FakeSentiment()
+    bot._signals = signals or FakeSignalGen()
+    bot._db = db or FakeDB()
+    return bot
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+def test_poll_saves_new_articles():
+    """New articles from the news client must be scored and persisted."""
+    articles = [
+        {"id": 1, "headline": "Fed cuts rates", "summary": "", "source": "Reuters",
+         "url": "", "category": "general", "datetime": None, "related": ""},
+        {"id": 2, "headline": "Markets surge", "summary": "", "source": "AP",
+         "url": "", "category": "general", "datetime": None, "related": ""},
+    ]
+    db = FakeDB(existing_ids=[])
+    bot = _make_scheduler(news=FakeNews(articles), db=db)
+
+    bot._poll()
+
+    assert len(db.saved_articles) == 2, (
+        "Expected 2 saved articles, got %d" % len(db.saved_articles)
+    )
+
+
+def test_poll_skips_duplicate_articles():
+    """Articles already in the DB must not be re-scored or re-saved."""
+    articles = [
+        {"id": 1, "headline": "Old news", "summary": "", "source": "Reuters",
+         "url": "", "category": "general", "datetime": None, "related": ""},
+        {"id": 2, "headline": "New news", "summary": "", "source": "AP",
+         "url": "", "category": "general", "datetime": None, "related": ""},
+    ]
+    db = FakeDB(existing_ids=[1])  # article 1 already seen
+    bot = _make_scheduler(news=FakeNews(articles), db=db)
+
+    bot._poll()
+
+    assert len(db.saved_articles) == 1, (
+        "Expected only 1 new article saved (id=2), got %d" % len(db.saved_articles)
+    )
+    assert db.saved_articles[0]["id"] == 2
+
+
+def test_poll_saves_signals():
+    """Signals returned by the rules engine must be persisted to the DB."""
+    articles = [
+        {"id": 1, "headline": "Fed pivot", "summary": "", "source": "Reuters",
+         "url": "", "category": "general", "datetime": None, "related": ""},
+    ]
+    fake_signal = {
+        "article_id": 1, "ticker": "SPY", "action": "buy",
+        "confidence": 0.85, "theme": "fed_dovish", "rationale": "test",
+    }
+    db = FakeDB()
+    bot = _make_scheduler(
+        news=FakeNews(articles),
+        signals=FakeSignalGen([fake_signal]),
+        db=db,
+    )
+
+    bot._poll()
+
+    assert len(db.saved_signals) == 1
+    assert db.saved_signals[0]["ticker"] == "SPY"
+    assert db.saved_signals[0]["action"] == "buy"
+
+
+def test_poll_no_articles_is_a_noop():
+    """An empty news response must not touch the DB at all."""
+    db = FakeDB()
+    bot = _make_scheduler(news=FakeNews([]), db=db)
+
+    bot._poll()
+
+    assert db.saved_articles == []
+    assert db.saved_signals == []
+
+
+def test_poll_news_exception_does_not_crash():
+    """If the news client raises, _poll() must catch it and return cleanly."""
+    class BrokenNews:
+        def get_general_news(self):
+            raise RuntimeError("network timeout")
+
+    db = FakeDB()
+    bot = _make_scheduler(news=BrokenNews(), db=db)
+
+    # Must not raise
+    bot._poll()
+
+    assert db.saved_articles == []
+
+
+def test_poll_all_duplicates_skips_sentiment():
+    """If every article is a duplicate, sentiment scoring must not be called."""
+    articles = [{"id": 10, "headline": "Old", "summary": "", "source": "x",
+                 "url": "", "category": "", "datetime": None, "related": ""}]
+
+    class FailSentiment:
+        def score_articles(self, articles):
+            raise AssertionError("score_articles should not be called for all-duplicate poll")
+
+    db = FakeDB(existing_ids=[10])
+    bot = _make_scheduler(news=FakeNews(articles), sentiment=FailSentiment(), db=db)
+
+    bot._poll()  # must not raise

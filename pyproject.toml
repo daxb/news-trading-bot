@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests that hit real external APIs (deselect with -m 'not integration')",
+    "slow: marks tests that load large ML models (deselect with -m 'not slow')",
+]

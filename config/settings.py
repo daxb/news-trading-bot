@@ -51,3 +51,11 @@ MAX_TRADES_PER_DAY = int(os.getenv('MAX_TRADES_PER_DAY', 10))
 # Telegram alerts
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
+
+# Macro context — FRED indicator thresholds and refresh cadence
+MACRO_REFRESH_CYCLES = int(os.getenv('MACRO_REFRESH_CYCLES', 12))  # every ~1 hr at 5 min polls
+FEDFUNDS_HIGH = float(os.getenv('FEDFUNDS_HIGH', 4.0))   # rates considered elevated
+FEDFUNDS_LOW = float(os.getenv('FEDFUNDS_LOW', 2.0))     # rates considered low
+UNRATE_HIGH = float(os.getenv('UNRATE_HIGH', 5.5))       # unemployment considered elevated
+UNRATE_LOW = float(os.getenv('UNRATE_LOW', 4.0))         # unemployment considered tight
+DGS10_HIGH = float(os.getenv('DGS10_HIGH', 4.0))         # 10-yr yield considered elevated

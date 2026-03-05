@@ -24,6 +24,8 @@ from config import settings
 from core.alerts import send_signal_alert
 from core.broker import BrokerClient
 from core.db import Database
+from core.macro import MacroClient
+from core.macro_context import MacroContext
 from core.news import NewsClient
 from core.risk_manager import RiskManager
 from core.rss import RSSClient
@@ -45,6 +47,7 @@ class BotScheduler:
         self._signals = SignalGenerator()
         self._broker = BrokerClient()
         self._risk = RiskManager(self._broker, self._db)
+        self._macro_ctx = MacroContext(MacroClient())
         self._scheduler = BackgroundScheduler(daemon=True)
         self._stop_event = threading.Event()
         logger.info("Pipeline ready.")
@@ -92,11 +95,15 @@ class BotScheduler:
         if not new_articles:
             return
 
+        # Tick macro context — refreshes FRED data every N cycles
+        self._macro_ctx.tick()
+
         # Score with FinBERT
         scored = self._sentiment.score_articles(new_articles)
 
-        # Generate signals
+        # Generate signals, then filter/adjust by macro context
         signals = self._signals.generate_signals(scored)
+        signals = self._macro_ctx.adjust_signals(signals)
 
         # Persist articles
         saved_articles = 0

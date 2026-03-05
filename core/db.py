@@ -317,6 +317,19 @@ class Database:
             logger.exception("Failed to update signal id=%d", signal_id)
             return False
 
+    def get_last_executed_signal(self, ticker: str) -> dict | None:
+        """Return the most recent executed signal for a ticker, or None."""
+        try:
+            row = self._conn.execute(
+                "SELECT * FROM signals WHERE ticker = ? AND status = 'executed' "
+                "ORDER BY executed_at DESC LIMIT 1",
+                (ticker,),
+            ).fetchone()
+            return dict(row) if row else None
+        except Exception:
+            logger.exception("Failed to fetch last executed signal for %s", ticker)
+            return None
+
     def count_executed_today(self) -> int:
         """Count signals executed today (UTC date)."""
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")

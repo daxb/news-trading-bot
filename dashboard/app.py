@@ -100,7 +100,7 @@ with st.sidebar:
     st.title("📈 Macro Trader")
     st.caption(f"Updated: {_utc_now()}")
 
-    if st.button("🔄 Refresh", use_container_width=True):
+    if st.button("🔄 Refresh", width='stretch'):
         st.cache_data.clear()
         st.rerun()
 
@@ -165,7 +165,7 @@ with tab_portfolio:
                 "Unrealized P&L": f"${p['unrealized_pl']:,.2f}",
                 "P&L %":         f"{p['unrealized_plpc'] * 100:.2f}%",
             })
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width='stretch', hide_index=True)
 
 # ── Signals ──────────────────────────────────────────────────────────────────
 
@@ -205,7 +205,7 @@ with tab_signals:
                 "Executed":   s["executed_at"][:19] if s["executed_at"] else "—",
                 "Rationale":  s["rationale"],
             })
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width='stretch', hide_index=True)
 
 # ── News ─────────────────────────────────────────────────────────────────────
 
@@ -244,4 +244,4 @@ with tab_news:
                 "Score":     f"{a.get('sentiment_score', 0):.2f}",
                 "Date":      (a["datetime"] or "")[:19],
             })
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width='stretch', hide_index=True)

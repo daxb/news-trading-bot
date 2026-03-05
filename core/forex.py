@@ -19,7 +19,7 @@ import logging
 from oandapyV20 import API
 from oandapyV20.endpoints.accounts import AccountSummary
 from oandapyV20.endpoints.orders import OrderCreate
-from oandapyV20.endpoints.positions import OpenPositions, PositionDetails
+from oandapyV20.endpoints.positions import OpenPositions, PositionClose, PositionDetails
 from oandapyV20.endpoints.pricing import PricingInfo
 from oandapyV20.exceptions import V20Error
 
@@ -191,4 +191,24 @@ class ForexBroker:
             return {}
         except Exception:
             logger.exception("Failed to submit OANDA order: %s %s", side, instrument)
+            return {}
+
+    def close_position(self, instrument: str) -> dict:
+        """Close the entire open position for an instrument (long or short)."""
+        try:
+            pos = self.get_position(instrument)
+            if not pos:
+                logger.warning("close_position: no open position for %s", instrument)
+                return {}
+            data = {"longUnits": "ALL"} if pos["side"] == "long" else {"shortUnits": "ALL"}
+            r = PositionClose(self._account_id, instrument.upper(), data=data)
+            self._client.request(r)
+            txn_ids = r.response.get("relatedTransactionIDs", [])
+            logger.info("Closed OANDA position: %s", instrument)
+            return {"id": txn_ids[0] if txn_ids else "", "status": "closed"}
+        except V20Error as e:
+            logger.error("OANDA close position failed for %s: %s", instrument, e)
+            return {}
+        except Exception:
+            logger.exception("Failed to close OANDA position for %s", instrument)
             return {}

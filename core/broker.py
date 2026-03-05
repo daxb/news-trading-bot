@@ -156,6 +156,16 @@ class BrokerClient:
             logger.exception("Failed to get latest price for %s", ticker.upper())
             return None
 
+    def close_position(self, ticker: str) -> dict:
+        """Close the entire open position for a ticker."""
+        try:
+            order = self._client.close_position(ticker.upper())
+            logger.info("Closed position: %s", ticker.upper())
+            return {"id": str(order.id), "status": str(order.status)}
+        except Exception:
+            logger.exception("Failed to close position for %s", ticker.upper())
+            return {}
+
     def get_orders(self, status: str = "all") -> list[dict]:
         """Fetch orders filtered by status ('open', 'closed', 'all')."""
         status_map = {

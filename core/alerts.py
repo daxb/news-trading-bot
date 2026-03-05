@@ -57,3 +57,29 @@ def send_signal_alert(signal: dict) -> None:
         logger.info("Telegram alert sent: %s %s", action, ticker)
     except Exception:
         logger.exception("Failed to send Telegram alert")
+
+
+def send_exit_alert(ticker: str, reason: str, order_id: str = "") -> None:
+    """Post a position-exit notification to Telegram."""
+    if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
+        logger.debug("Telegram not configured — skipping exit alert")
+        return
+
+    text = f"🔴 *CLOSED {ticker}*\nReason: {reason}"
+    if order_id:
+        text += f"\nOrder: `{order_id}`"
+
+    try:
+        resp = requests.post(
+            _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
+            json={
+                "chat_id": settings.TELEGRAM_CHAT_ID,
+                "text": text,
+                "parse_mode": "Markdown",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        logger.info("Telegram exit alert sent: %s", ticker)
+    except Exception:
+        logger.exception("Failed to send Telegram exit alert")

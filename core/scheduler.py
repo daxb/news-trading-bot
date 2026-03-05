@@ -25,6 +25,7 @@ from core.alerts import send_signal_alert
 from core.broker import BrokerClient
 from core.db import Database
 from core.dedup import deduplicate
+from core.exit_manager import ExitManager
 from core.forex import ForexBroker
 from core.macro import MacroClient
 from core.macro_context import MacroContext
@@ -60,6 +61,7 @@ class BotScheduler:
             logger.info("OANDA not configured — forex signals will be skipped")
 
         self._macro_ctx = MacroContext(MacroClient())
+        self._exit_mgr = ExitManager(self._broker, self._db, forex=self._forex)
         self._scheduler = BackgroundScheduler(daemon=True)
         self._stop_event = threading.Event()
         logger.info("Pipeline ready.")
@@ -206,8 +208,16 @@ class BotScheduler:
             trigger="interval",
             seconds=interval,
             id="news_poll",
-            max_instances=1,       # never overlap if a poll runs slow
-            coalesce=True,         # skip missed runs rather than piling up
+            max_instances=1,
+            coalesce=True,
+        )
+        self._scheduler.add_job(
+            self._exit_mgr.check_exits,
+            trigger="interval",
+            seconds=settings.POSITION_MONITOR_INTERVAL_SECONDS,
+            id="position_monitor",
+            max_instances=1,
+            coalesce=True,
         )
 
         # Register OS signal handlers so Ctrl-C / SIGTERM cleanly stop the bot

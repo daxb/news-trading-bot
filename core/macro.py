@@ -16,11 +16,23 @@ logger = logging.getLogger(__name__)
 
 # Key macro series we track, with human-readable labels
 KEY_INDICATORS = {
-    "FEDFUNDS": "Fed Funds Rate",
-    "CPIAUCSL": "CPI (Inflation)",
-    "UNRATE": "Unemployment Rate",
-    "GDP": "GDP",
-    "DGS10": "10-Year Treasury Yield",
+    # Policy
+    "FEDFUNDS":     "Fed Funds Rate",
+    "PCEPILFE":     "Core PCE Index",
+    "T5YIE":        "5-Yr Breakeven Inflation",
+    # Growth / Labour
+    "UNRATE":       "Unemployment Rate",
+    "ICSA":         "Initial Jobless Claims",
+    "UMCSENT":      "Consumer Sentiment",
+    "GDP":          "GDP",
+    # Rates / Spreads
+    "DGS10":        "10-Year Treasury Yield",
+    "T10Y2Y":       "Yield Curve (10Y-2Y)",
+    "BAMLH0A0HYM2": "HY Credit Spreads",
+    "CPIAUCSL":     "CPI (Inflation)",
+    # Risk / FX
+    "VIXCLS":       "VIX",
+    "DTWEXBGS":     "USD Trade-Weighted Index",
 }
 
 

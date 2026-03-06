@@ -118,17 +118,38 @@ with st.sidebar:
     with st.expander("Macro Indicators"):
         macro = fetch_macro()
         if macro:
-            labels = {
-                "FEDFUNDS": "Fed Funds Rate",
-                "UNRATE":   "Unemployment",
-                "DGS10":    "10-Yr Yield",
-                "CPIAUCSL": "CPI Index",
+            # (label, format_string)
+            _MACRO_GROUPS: dict[str, list[tuple[str, str, str]]] = {
+                "Policy": [
+                    ("FEDFUNDS",  "Fed Funds Rate",       "{:.2f}%"),
+                    ("PCEPILFE",  "Core PCE Index",       "{:.1f}"),
+                    ("T5YIE",     "5-Yr Breakeven",       "{:.2f}%"),
+                    ("CPIAUCSL",  "CPI Index",            "{:.1f}"),
+                ],
+                "Growth / Labour": [
+                    ("UNRATE",    "Unemployment",         "{:.1f}%"),
+                    ("ICSA",      "Initial Claims",       "{:,.0f}"),
+                    ("UMCSENT",   "Consumer Sentiment",   "{:.1f}"),
+                    ("GDP",       "GDP",                  "{:.0f}"),
+                ],
+                "Rates / Spreads": [
+                    ("DGS10",         "10-Yr Yield",          "{:.2f}%"),
+                    ("T10Y2Y",        "Yield Curve (10Y−2Y)", "{:.2f}%"),
+                    ("BAMLH0A0HYM2",  "HY Credit Spreads",    "{:.2f}%"),
+                ],
+                "Risk / FX": [
+                    ("VIXCLS",    "VIX",                  "{:.1f}"),
+                    ("DTWEXBGS",  "USD Trade-Weighted",   "{:.1f}"),
+                ],
             }
-            for key, label in labels.items():
-                if key in macro:
+            for group, series_list in _MACRO_GROUPS.items():
+                group_entries = [(s, lbl, fmt) for s, lbl, fmt in series_list if s in macro]
+                if not group_entries:
+                    continue
+                st.caption(group)
+                for key, label, fmt in group_entries:
                     entry = macro[key]
-                    suffix = "%" if key in ("FEDFUNDS", "UNRATE", "DGS10") else ""
-                    st.metric(label, f"{entry['value']:.2f}{suffix}", delta=None,
+                    st.metric(label, fmt.format(entry["value"]), delta=None,
                               help=f"FRED {key} as of {entry['date']}")
         else:
             st.warning("Macro data unavailable")

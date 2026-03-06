@@ -11,6 +11,9 @@ import time
 
 from transformers import pipeline
 
+# Suppress noisy "unauthenticated requests" warning from huggingface_hub
+logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
+
 logger = logging.getLogger(__name__)
 
 _MODEL_ID = "ProsusAI/finbert"

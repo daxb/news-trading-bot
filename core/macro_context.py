@@ -42,7 +42,25 @@ _RULES: list[tuple] = [
     ("UNRATE",   lambda v: v < settings.UNRATE_LOW,    1.2, "jobs_strong",    "tight labour market confirms jobs thesis"),
     ("UNRATE",   lambda v: v > settings.UNRATE_HIGH,   0.7, "jobs_strong",    "elevated unemployment contradicts jobs thesis"),
     # 10-Year Treasury Yield
-    ("DGS10",    lambda v: v > settings.DGS10_HIGH,    1.1, "geopolitical_risk", "rising yields confirm risk-off environment"),
+    ("DGS10",    lambda v: v > settings.DGS10_HIGH,    1.1, "geopolitical_risk", "elevated yields confirm risk-off environment"),
+    # Yield Curve (10Y − 2Y): inversion is a reliable recession leading indicator
+    ("T10Y2Y",   lambda v: v < settings.T10Y2Y_INVERSION, 1.25, "recession_risk", "inverted yield curve confirms recession risk"),
+    ("T10Y2Y",   lambda v: v < settings.T10Y2Y_INVERSION, 0.75, "jobs_strong",    "inverted yield curve contradicts jobs strength thesis"),
+    ("T10Y2Y",   lambda v: v >= 0,                     0.85, "recession_risk", "non-inverted curve reduces recession probability"),
+    # HY Credit Spreads: wide spreads = credit stress / risk-off
+    ("BAMLH0A0HYM2", lambda v: v > settings.HY_SPREAD_HIGH, 1.2, "recession_risk",    "wide credit spreads confirm financial stress"),
+    ("BAMLH0A0HYM2", lambda v: v > settings.HY_SPREAD_HIGH, 1.2, "geopolitical_risk", "wide credit spreads confirm risk-off environment"),
+    ("BAMLH0A0HYM2", lambda v: v > settings.HY_SPREAD_HIGH, 0.7, "fed_dovish",        "credit stress makes easy financial conditions less likely"),
+    # USD Trade-Weighted Index: strong USD affects forex signals
+    ("DTWEXBGS", lambda v: v > settings.USD_INDEX_HIGH, 1.2, "usd_strength", "elevated USD index confirms dollar strength thesis"),
+    ("DTWEXBGS", lambda v: v > settings.USD_INDEX_HIGH, 0.7, "usd_weakness", "elevated USD index contradicts dollar weakness thesis"),
+    # Initial Jobless Claims: timely weekly labour market signal
+    ("ICSA",     lambda v: v > settings.ICSA_HIGH,     1.2, "recession_risk", "elevated jobless claims support recession thesis"),
+    ("ICSA",     lambda v: v > settings.ICSA_HIGH,     0.7, "jobs_strong",    "elevated jobless claims contradict jobs strength thesis"),
+    # VIX: broad fear gauge; elevated VIX = risk-off
+    ("VIXCLS",   lambda v: v > settings.VIX_HIGH,      1.2, "geopolitical_risk", "elevated VIX confirms risk-off/fear environment"),
+    ("VIXCLS",   lambda v: v > settings.VIX_HIGH,      1.1, "recession_risk",    "elevated VIX supports risk-off thesis"),
+    ("VIXCLS",   lambda v: v > settings.VIX_HIGH,      0.8, "market_rally",      "elevated VIX contradicts broad market rally thesis"),
 ]
 
 

@@ -71,6 +71,12 @@ def fetch_open_orders() -> list[dict]:
 
 
 @st.cache_data(ttl=30)
+def fetch_closed_orders(limit: int) -> list[dict]:
+    orders = get_broker().get_orders(status="closed")
+    return orders[:limit]
+
+
+@st.cache_data(ttl=30)
 def fetch_signals(limit: int, status: str | None) -> list[dict]:
     return get_db().get_signals(limit=limit, status=status or None)
 
@@ -284,6 +290,32 @@ with tab_portfolio:
                 "Submitted": o["submitted_at"][:19] if o["submitted_at"] else "",
             })
         st.dataframe(order_rows, width='stretch', hide_index=True)
+
+    @st.fragment
+    def render_recent_trades() -> None:
+        col_t1, col_t2 = st.columns([3, 1])
+        with col_t1:
+            st.subheader("Recent Trades")
+        with col_t2:
+            trade_limit = st.slider("Last N trades", 5, 100, 20, key="trade_limit")
+
+        closed = fetch_closed_orders(trade_limit)
+        if not closed:
+            st.info("No closed trades found.")
+        else:
+            trade_rows = []
+            for o in closed:
+                trade_rows.append({
+                    "Symbol":      o["symbol"],
+                    "Side":        o["side"],
+                    "Qty":         o["qty"],
+                    "Fill Price":  f"${float(o['filled_avg_price']):,.2f}" if o["filled_avg_price"] else "—",
+                    "Status":      o["status"],
+                    "Filled At":   o["filled_at"][:19] if o["filled_at"] else "—",
+                })
+            st.dataframe(trade_rows, width='stretch', hide_index=True)
+
+    render_recent_trades()
 
 # ── Signals ──────────────────────────────────────────────────────────────────
 

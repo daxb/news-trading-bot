@@ -125,6 +125,21 @@ class BotScheduler:
             logger.info("All articles were near-duplicates — nothing to process.")
             return
 
+        # Pre-filter: drop articles that can't match any trading rule keyword.
+        # This avoids running FinBERT on content like dividend history listicles.
+        relevant_articles = [a for a in new_articles if self._signals.is_relevant(a)]
+        dropped = len(new_articles) - len(relevant_articles)
+        if dropped:
+            logger.info(
+                "Pre-filter: dropped %d irrelevant articles, %d remain for scoring",
+                dropped, len(relevant_articles),
+            )
+        new_articles = relevant_articles
+
+        if not new_articles:
+            logger.info("No relevant articles after pre-filter — nothing to process.")
+            return
+
         # Cap articles per cycle so FinBERT scoring stays well under the poll interval.
         # 250 articles × ~2 s/article on CPU = 8+ min, blocking subsequent cycles.
         # 50 articles × ~2 s = ~100 s — leaves plenty of headroom.

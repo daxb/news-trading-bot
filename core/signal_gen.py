@@ -197,6 +197,18 @@ class SignalGenerator:
     # Public API
     # ------------------------------------------------------------------
 
+    def is_relevant(self, article: dict) -> bool:
+        """Return True if the article matches at least one rule's keywords.
+
+        Used as a cheap pre-filter before FinBERT scoring so irrelevant
+        articles never reach the GPU/CPU-intensive sentiment model.
+        """
+        text = _build_text(article)
+        return any(
+            any(kw in text for kw in rule["keywords"])
+            for rule in _RULES
+        )
+
     def classify_theme(self, text: str) -> tuple[str, float] | tuple[None, float]:
         """
         Return the first matching (theme_name, confidence_multiplier) or

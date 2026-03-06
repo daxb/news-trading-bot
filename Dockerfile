@@ -13,9 +13,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# ── Python dependencies (separate layer so source changes don't re-install) ──
+# ── PyTorch CPU-only (install before requirements.txt) ───────────────────────
+# The default torch wheel bundles CUDA libraries (~1.8 GB we don't need on a
+# CPU-only VM). Installing from the PyTorch CPU index first keeps the image
+# well under Fly.io's 8 GB uncompressed limit.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir torch \
+        --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt
 
 # ── Pre-download FinBERT (~440 MB, baked into image layer) ───────────────────
 # Runs BEFORE copying source so that editing source code doesn't trigger

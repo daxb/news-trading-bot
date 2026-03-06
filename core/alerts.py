@@ -150,6 +150,46 @@ def send_hourly_update(
         logger.exception("Failed to send Telegram hourly update")
 
 
+def send_startup_alert() -> None:
+    """Notify Telegram that the bot has started."""
+    if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
+        return
+    try:
+        resp = requests.post(
+            _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
+            json={
+                "chat_id": settings.TELEGRAM_CHAT_ID,
+                "text": "🟢 *Macro Trader Bot — started*",
+                "parse_mode": "Markdown",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        logger.info("Telegram startup alert sent")
+    except Exception:
+        logger.exception("Failed to send Telegram startup alert")
+
+
+def send_shutdown_alert() -> None:
+    """Notify Telegram that the bot is shutting down."""
+    if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
+        return
+    try:
+        resp = requests.post(
+            _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
+            json={
+                "chat_id": settings.TELEGRAM_CHAT_ID,
+                "text": "🔴 *Macro Trader Bot — shutting down*",
+                "parse_mode": "Markdown",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        logger.info("Telegram shutdown alert sent")
+    except Exception:
+        logger.exception("Failed to send Telegram shutdown alert")
+
+
 def send_exit_alert(ticker: str, reason: str, order_id: str = "") -> None:
     """Post a position-exit notification to Telegram."""
     if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:

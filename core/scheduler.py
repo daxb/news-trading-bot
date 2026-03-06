@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from config import settings
-from core.alerts import send_hourly_update, send_signal_alert
+from core.alerts import send_hourly_update, send_shutdown_alert, send_signal_alert, send_startup_alert
 from core.broker import BrokerClient
 from core.db import Database
 from core.dedup import deduplicate
@@ -306,6 +306,7 @@ class BotScheduler:
         logger.info(
             "Scheduler started — polling every %d s. Press Ctrl-C to stop.", interval
         )
+        send_startup_alert()
 
         # Run one cycle immediately so we don't wait a full interval on startup
         self._poll()
@@ -318,6 +319,7 @@ class BotScheduler:
     def stop(self) -> None:
         """Gracefully stop the scheduler and close the DB connection."""
         logger.info("Shutting down …")
+        send_shutdown_alert()
         if self._scheduler.running:
             self._scheduler.shutdown(wait=False)
         self._db.close()

@@ -245,7 +245,8 @@ class BotScheduler:
             signals = self._db.get_signals_since(hours=1)
             account = self._broker.get_account()
             positions = self._broker.get_positions()
-            send_hourly_update(signals, account, positions)
+            open_orders = self._broker.get_orders(status="open")
+            send_hourly_update(signals, account, positions, open_orders)
         except Exception:
             logger.exception("Failed to build/send hourly update")
 

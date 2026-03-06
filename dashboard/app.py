@@ -66,6 +66,11 @@ def fetch_positions() -> list[dict]:
 
 
 @st.cache_data(ttl=30)
+def fetch_open_orders() -> list[dict]:
+    return get_broker().get_orders(status="open")
+
+
+@st.cache_data(ttl=30)
 def fetch_signals(limit: int, status: str | None) -> list[dict]:
     return get_db().get_signals(limit=limit, status=status or None)
 
@@ -143,11 +148,13 @@ with tab_portfolio:
     # Fetch account and positions in parallel — both are network calls and
     # independent of each other, so there's no reason to wait serially.
     with st.spinner("Loading portfolio…"):
-        with ThreadPoolExecutor(max_workers=2) as ex:
+        with ThreadPoolExecutor(max_workers=3) as ex:
             f_account   = ex.submit(fetch_account)
             f_positions = ex.submit(fetch_positions)
+            f_orders    = ex.submit(fetch_open_orders)
         account   = f_account.result()
         positions = f_positions.result()
+        orders    = f_orders.result()
 
     if not account:
         st.error("Could not load account data — check Alpaca API keys.")
@@ -176,6 +183,24 @@ with tab_portfolio:
                 "P&L %":         f"{p['unrealized_plpc'] * 100:.2f}%",
             })
         st.dataframe(rows, width='stretch', hide_index=True)
+
+    st.subheader("Open Orders")
+
+    if not orders:
+        st.info("No open orders.")
+    else:
+        order_rows = []
+        for o in orders:
+            order_rows.append({
+                "Order ID": o["id"][:8] + "…",
+                "Symbol":   o["symbol"],
+                "Side":     o["side"],
+                "Qty":      o["qty"],
+                "Type":     o["type"],
+                "Status":   o["status"],
+                "Submitted": o["submitted_at"][:19] if o["submitted_at"] else "",
+            })
+        st.dataframe(order_rows, width='stretch', hide_index=True)
 
 # ── Signals ──────────────────────────────────────────────────────────────────
 

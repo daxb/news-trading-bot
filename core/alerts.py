@@ -65,6 +65,7 @@ def send_hourly_update(
     signals: list[dict],
     account: dict,
     positions: list[dict],
+    open_orders: list[dict] | None = None,
 ) -> None:
     """Send an hourly summary of signals, trades, and P&L to Telegram."""
     if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
@@ -120,7 +121,18 @@ def send_hourly_update(
     else:
         pnl_lines.append("  No open positions")
 
-    text = header + "\n".join(sig_lines) + "\n".join(pnl_lines)
+    # Open orders section
+    order_lines: list[str] = []
+    if open_orders:
+        order_lines.append(f"\n*Open Orders ({len(open_orders)})*")
+        for o in open_orders:
+            sym  = o.get("symbol", "")
+            side = o.get("side", "").upper()
+            qty  = o.get("qty", "")
+            otype = o.get("type", "")
+            order_lines.append(f"  `{sym}` {side} {qty} ({otype})")
+
+    text = header + "\n".join(sig_lines) + "\n".join(pnl_lines) + "\n".join(order_lines)
 
     try:
         resp = requests.post(

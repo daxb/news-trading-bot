@@ -42,12 +42,12 @@ _FEEDS: list[dict] = [
         "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
     },
     {
-        "name": "MarketWatch",
-        "url": "https://feeds.marketwatch.com/marketwatch/topstories/",
+        "name": "AP Top News",
+        "url": "https://feeds.apnews.com/apnews/topnews",
     },
     {
-        "name": "Yahoo Finance",
-        "url": "https://finance.yahoo.com/news/rssindex",
+        "name": "AP Business",
+        "url": "https://feeds.apnews.com/apnews/business",
     },
 ]
 

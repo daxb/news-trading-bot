@@ -123,21 +123,33 @@ Bot and dashboard share a SQLite volume at `./data/trading.db`.
 
 ### Fly.io
 
+The app is deployed at `https://trading-bot-lingering-lake-4314.fly.dev`.
+
+**Deploys are automatic** — every push to `main` triggers `.github/workflows/fly-deploy.yml`,
+which builds and deploys to Fly.io via the `FLY_API_TOKEN` secret already configured in the repo.
+Monitor runs under the **Actions** tab on GitHub.
+
+For a first-time setup on a new Fly.io account:
+
 ```bash
 fly auth login
-fly launch   # first time only
-fly deploy
-```
-
-Set secrets on Fly.io (do not put keys in fly.toml):
-
-```bash
+fly launch        # generates fly.toml and fly-deploy.yml
 fly secrets set FINNHUB_API_KEY=... FRED_API_KEY=... \
     ALPACA_API_KEY=... ALPACA_SECRET_KEY=... \
     TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
 ```
 
-The dashboard is exposed at `https://<app-name>.fly.dev`.
+To deploy manually (bypassing GitHub Actions):
+
+```bash
+fly deploy
+```
+
+**Notes:**
+- API keys are stored as Fly.io secrets — never put them in `fly.toml`
+- The SQLite DB persists on a Fly.io volume (`trading_data` → `/app/data`)
+- Machine runs with 2 GB RAM (required for PyTorch + FinBERT at runtime)
+- Docker image uses CPU-only PyTorch to stay under Fly.io's 8 GB image limit
 
 ## Configuration Reference
 

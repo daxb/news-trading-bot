@@ -62,6 +62,11 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 # News fetching
 NEWS_FETCH_TIMEOUT_SECONDS = int(os.getenv('NEWS_FETCH_TIMEOUT_SECONDS', 10))
 
+# Max articles to score with FinBERT per poll cycle.
+# FinBERT runs ~2 s/article on CPU; keeping this ≤ 50 ensures scoring completes
+# well within the 5-minute poll interval (100 s vs 300 s budget).
+MAX_ARTICLES_PER_CYCLE = int(os.getenv('MAX_ARTICLES_PER_CYCLE', 50))
+
 # News deduplication
 DEDUP_SIMILARITY_THRESHOLD = float(os.getenv('DEDUP_SIMILARITY_THRESHOLD', 0.5))
 DEDUP_WINDOW_HOURS = int(os.getenv('DEDUP_WINDOW_HOURS', 4))

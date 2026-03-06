@@ -124,6 +124,17 @@ class BotScheduler:
             logger.info("All articles were near-duplicates — nothing to process.")
             return
 
+        # Cap articles per cycle so FinBERT scoring stays well under the poll interval.
+        # 250 articles × ~2 s/article on CPU = 8+ min, blocking subsequent cycles.
+        # 50 articles × ~2 s = ~100 s — leaves plenty of headroom.
+        max_per_cycle = settings.MAX_ARTICLES_PER_CYCLE
+        if len(new_articles) > max_per_cycle:
+            logger.info(
+                "Capping batch: %d → %d articles (MAX_ARTICLES_PER_CYCLE=%d)",
+                len(new_articles), max_per_cycle, max_per_cycle,
+            )
+            new_articles = new_articles[:max_per_cycle]
+
         # Tick macro context — refreshes FRED data every N cycles
         self._macro_ctx.tick()
 

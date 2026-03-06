@@ -63,6 +63,8 @@ class BrokerClient:
                 "buying_power": float(acct.buying_power),
                 "portfolio_value": float(acct.portfolio_value),
                 "equity": float(acct.equity),
+                "last_equity": float(acct.last_equity),
+                "created_at": str(acct.created_at),
                 "currency": str(acct.currency),
                 "pattern_day_trader": bool(acct.pattern_day_trader),
             }

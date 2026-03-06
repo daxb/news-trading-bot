@@ -159,11 +159,40 @@ with tab_portfolio:
     if not account:
         st.error("Could not load account data — check Alpaca API keys.")
     else:
+        equity      = account.get("equity", 0)
+        last_equity = account.get("last_equity", 0)
+        daily_pl    = equity - last_equity
+        daily_pct   = (daily_pl / last_equity * 100) if last_equity else 0
+
+        created_at_raw = account.get("created_at", "")
+        try:
+            created_dt = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
+            days_active = (datetime.now(timezone.utc) - created_dt).days
+        except (ValueError, TypeError):
+            days_active = None
+
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Portfolio Value", f"${account.get('portfolio_value', 0):,.2f}")
         c2.metric("Cash",            f"${account.get('cash', 0):,.2f}")
         c3.metric("Buying Power",    f"${account.get('buying_power', 0):,.2f}")
-        c4.metric("Equity",          f"${account.get('equity', 0):,.2f}")
+        c4.metric("Equity",          f"${equity:,.2f}")
+
+        d1, d2, d3 = st.columns(3)
+        d1.metric(
+            "Daily P&L",
+            f"${daily_pl:+,.2f}",
+            delta=f"{daily_pct:+.2f}%",
+            delta_color="normal",
+        )
+        d2.metric(
+            "Cumulative P&L",
+            f"${equity - account.get('portfolio_value', equity):+,.2f}",
+            help="Equity minus current portfolio value (unrealized gains/losses)",
+        )
+        d3.metric(
+            "Days Active",
+            str(days_active) if days_active is not None else "—",
+        )
 
     st.subheader("Open Positions")
 

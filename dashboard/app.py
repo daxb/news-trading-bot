@@ -86,6 +86,11 @@ def fetch_macro() -> dict:
     return get_macro().get_key_indicators()
 
 
+@st.cache_data(ttl=300)
+def fetch_portfolio_history(period: str, timeframe: str) -> dict:
+    return get_broker().get_portfolio_history(period=period, timeframe=timeframe)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -185,6 +190,34 @@ with tab_portfolio:
         c2.metric("Cash",            f"${account.get('cash', 0):,.2f}")
         c3.metric("Buying Power",    f"${account.get('buying_power', 0):,.2f}")
         c4.metric("Equity",          f"${account.get('equity', 0):,.2f}")
+
+    @st.fragment
+    def render_performance_charts() -> None:
+        _TIMEFRAME_MAP = {"1D": "5Min", "1W": "1H", "1M": "1D", "3M": "1D", "1A": "1D"}
+        st.subheader("Performance")
+        perf_period = st.selectbox(
+            "Period", list(_TIMEFRAME_MAP.keys()), index=2,
+            key="perf_period", label_visibility="collapsed",
+        )
+        history = fetch_portfolio_history(perf_period, _TIMEFRAME_MAP[perf_period])
+        if not history:
+            st.info("Portfolio history unavailable.")
+            return
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            st.caption("Portfolio Value ($)")
+            st.line_chart(
+                {"Date": history["dates"], "Value ($)": history["equity"]},
+                x="Date", y="Value ($)", height=250,
+            )
+        with col_c2:
+            st.caption("Return (%)")
+            st.line_chart(
+                {"Date": history["dates"], "Return (%)": history["profit_loss_pct"]},
+                x="Date", y="Return (%)", height=250,
+            )
+
+    render_performance_charts()
 
     st.subheader("Open Positions")
 

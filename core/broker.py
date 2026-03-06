@@ -7,12 +7,13 @@ the codebase is fully decoupled from the SDK.
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Optional
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestTradeRequest
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
+from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest, GetPortfolioHistoryRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 
 from config import settings
@@ -164,6 +165,58 @@ class BrokerClient:
             return {"id": str(order.id), "status": str(order.status)}
         except Exception:
             logger.exception("Failed to close position for %s", ticker.upper())
+            return {}
+
+    def get_portfolio_history(self, period: str = "1M", timeframe: str = "1D") -> dict:
+        """
+        Return portfolio equity and P&L history from Alpaca.
+
+        Args:
+            period:    "1D" | "1W" | "1M" | "3M" | "6M" | "1A"
+            timeframe: "5Min" | "15Min" | "1H" | "1D"
+
+        Returns:
+            {
+                "dates":            list[str],   # formatted timestamps
+                "equity":           list[float], # portfolio value at each point
+                "profit_loss":      list[float], # absolute P&L
+                "profit_loss_pct":  list[float], # P&L as percentage (e.g. 2.5 = 2.5%)
+                "base_value":       float,
+            }
+            Empty dict on error or no data.
+        """
+        try:
+            req = GetPortfolioHistoryRequest(period=period, timeframe=timeframe)
+            h = self._client.get_portfolio_history(request=req)
+
+            # Filter rows where equity is None (can occur for extended-hours slots)
+            rows = [
+                (ts, eq, pl, plpct)
+                for ts, eq, pl, plpct in zip(
+                    h.timestamp, h.equity, h.profit_loss, h.profit_loss_pct
+                )
+                if eq is not None
+            ]
+            if not rows:
+                return {}
+
+            timestamps, equity, profit_loss, profit_loss_pct = zip(*rows)
+
+            date_fmt = "%m-%d %H:%M" if period == "1D" else "%Y-%m-%d"
+            dates = [
+                datetime.fromtimestamp(ts, tz=timezone.utc).strftime(date_fmt)
+                for ts in timestamps
+            ]
+
+            return {
+                "dates": list(dates),
+                "equity": [round(v, 2) for v in equity],
+                "profit_loss": [round(v, 2) for v in profit_loss],
+                "profit_loss_pct": [round(v * 100, 4) for v in profit_loss_pct],
+                "base_value": float(h.base_value),
+            }
+        except Exception:
+            logger.exception("Failed to fetch portfolio history (period=%s)", period)
             return {}
 
     def get_orders(self, status: str = "all") -> list[dict]:

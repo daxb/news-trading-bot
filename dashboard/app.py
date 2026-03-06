@@ -9,6 +9,7 @@ Run from the project root (venv active):
 """
 
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -65,6 +66,11 @@ def fetch_positions() -> list[dict]:
 
 
 @st.cache_data(ttl=30)
+def fetch_open_orders() -> list[dict]:
+    return get_broker().get_orders(status="open")
+
+
+@st.cache_data(ttl=30)
 def fetch_signals(limit: int, status: str | None) -> list[dict]:
     return get_db().get_signals(limit=limit, status=status or None)
 
@@ -74,7 +80,8 @@ def fetch_articles(limit: int, sentiment: str | None) -> list[dict]:
     return get_db().get_articles(limit=limit, sentiment_label=sentiment or None)
 
 
-@st.cache_data(ttl=300)
+# FRED data changes at most monthly — no need to hit the API more than once/hr.
+@st.cache_data(ttl=3600)
 def fetch_macro() -> dict:
     return get_macro().get_key_indicators()
 
@@ -105,24 +112,26 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    st.subheader("Macro Indicators")
 
-    macro = fetch_macro()
-    if macro:
-        labels = {
-            "FEDFUNDS": "Fed Funds Rate",
-            "UNRATE":   "Unemployment",
-            "DGS10":    "10-Yr Yield",
-            "CPIAUCSL": "CPI Index",
-        }
-        for key, label in labels.items():
-            if key in macro:
-                entry = macro[key]
-                suffix = "%" if key in ("FEDFUNDS", "UNRATE", "DGS10") else ""
-                st.metric(label, f"{entry['value']:.2f}{suffix}", delta=None,
-                          help=f"FRED {key} as of {entry['date']}")
-    else:
-        st.warning("Macro data unavailable")
+    # Macro data is slow (FRED API) and changes infrequently — lazy-load it
+    # behind an expander so it doesn't block the initial page render.
+    with st.expander("Macro Indicators"):
+        macro = fetch_macro()
+        if macro:
+            labels = {
+                "FEDFUNDS": "Fed Funds Rate",
+                "UNRATE":   "Unemployment",
+                "DGS10":    "10-Yr Yield",
+                "CPIAUCSL": "CPI Index",
+            }
+            for key, label in labels.items():
+                if key in macro:
+                    entry = macro[key]
+                    suffix = "%" if key in ("FEDFUNDS", "UNRATE", "DGS10") else ""
+                    st.metric(label, f"{entry['value']:.2f}{suffix}", delta=None,
+                              help=f"FRED {key} as of {entry['date']}")
+        else:
+            st.warning("Macro data unavailable")
 
     st.divider()
     st.caption(f"Paper trading: {'✅ ON' if settings.PAPER_TRADING else '🚨 OFF'}")
@@ -136,7 +145,16 @@ tab_portfolio, tab_signals, tab_news = st.tabs(["Portfolio", "Signals", "News"])
 # ── Portfolio ────────────────────────────────────────────────────────────────
 
 with tab_portfolio:
-    account = fetch_account()
+    # Fetch account and positions in parallel — both are network calls and
+    # independent of each other, so there's no reason to wait serially.
+    with st.spinner("Loading portfolio…"):
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            f_account   = ex.submit(fetch_account)
+            f_positions = ex.submit(fetch_positions)
+            f_orders    = ex.submit(fetch_open_orders)
+        account   = f_account.result()
+        positions = f_positions.result()
+        orders    = f_orders.result()
 
     if not account:
         st.error("Could not load account data — check Alpaca API keys.")
@@ -148,7 +166,6 @@ with tab_portfolio:
         c4.metric("Equity",          f"${account.get('equity', 0):,.2f}")
 
     st.subheader("Open Positions")
-    positions = fetch_positions()
 
     if not positions:
         st.info("No open positions.")
@@ -167,9 +184,29 @@ with tab_portfolio:
             })
         st.dataframe(rows, width='stretch', hide_index=True)
 
+    st.subheader("Open Orders")
+
+    if not orders:
+        st.info("No open orders.")
+    else:
+        order_rows = []
+        for o in orders:
+            order_rows.append({
+                "Order ID": o["id"][:8] + "…",
+                "Symbol":   o["symbol"],
+                "Side":     o["side"],
+                "Qty":      o["qty"],
+                "Type":     o["type"],
+                "Status":   o["status"],
+                "Submitted": o["submitted_at"][:19] if o["submitted_at"] else "",
+            })
+        st.dataframe(order_rows, width='stretch', hide_index=True)
+
 # ── Signals ──────────────────────────────────────────────────────────────────
 
-with tab_signals:
+@st.fragment
+def render_signals_tab() -> None:
+    """Isolated fragment so slider/filter changes only re-run this section."""
     col_f1, col_f2 = st.columns([1, 3])
     with col_f1:
         status_filter = st.selectbox(
@@ -207,9 +244,12 @@ with tab_signals:
             })
         st.dataframe(rows, width='stretch', hide_index=True)
 
+
 # ── News ─────────────────────────────────────────────────────────────────────
 
-with tab_news:
+@st.fragment
+def render_news_tab() -> None:
+    """Isolated fragment so slider/filter changes only re-run this section."""
     col_n1, col_n2 = st.columns([1, 3])
     with col_n1:
         sentiment_filter = st.selectbox(
@@ -245,3 +285,10 @@ with tab_news:
                 "Date":      (a["datetime"] or "")[:19],
             })
         st.dataframe(rows, width='stretch', hide_index=True)
+
+
+with tab_signals:
+    render_signals_tab()
+
+with tab_news:
+    render_news_tab()

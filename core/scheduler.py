@@ -18,11 +18,12 @@ import signal as _signal
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from config import settings
-from core.alerts import send_signal_alert
+from core.alerts import send_hourly_update, send_signal_alert
 from core.broker import BrokerClient
 from core.db import Database
 from core.dedup import deduplicate
@@ -124,6 +125,21 @@ class BotScheduler:
             logger.info("All articles were near-duplicates — nothing to process.")
             return
 
+        # Pre-filter: drop articles that can't match any trading rule keyword.
+        # This avoids running FinBERT on content like dividend history listicles.
+        relevant_articles = [a for a in new_articles if self._signals.is_relevant(a)]
+        dropped = len(new_articles) - len(relevant_articles)
+        if dropped:
+            logger.info(
+                "Pre-filter: dropped %d irrelevant articles, %d remain for scoring",
+                dropped, len(relevant_articles),
+            )
+        new_articles = relevant_articles
+
+        if not new_articles:
+            logger.info("No relevant articles after pre-filter — nothing to process.")
+            return
+
         # Cap articles per cycle so FinBERT scoring stays well under the poll interval.
         # 250 articles × ~2 s/article on CPU = 8+ min, blocking subsequent cycles.
         # 50 articles × ~2 s = ~100 s — leaves plenty of headroom.
@@ -214,6 +230,42 @@ class BotScheduler:
         )
 
     # ------------------------------------------------------------------
+    # Hourly digest
+    # ------------------------------------------------------------------
+
+    _ET = ZoneInfo("America/New_York")
+    # Market open/close in ET (inclusive on open, exclusive on close)
+    _MARKET_OPEN_H = 9
+    _MARKET_OPEN_M = 30
+    _MARKET_CLOSE_H = 16
+
+    def _is_trading_hours(self) -> bool:
+        """Return True if current ET time is within regular US market hours."""
+        now = datetime.now(self._ET)
+        if now.weekday() >= 5:          # Saturday=5, Sunday=6
+            return False
+        open_mins = self._MARKET_OPEN_H * 60 + self._MARKET_OPEN_M
+        close_mins = self._MARKET_CLOSE_H * 60
+        current_mins = now.hour * 60 + now.minute
+        return open_mins <= current_mins < close_mins
+
+    def _hourly_update(self) -> None:
+        """Send a Telegram digest of signals, trades, and P&L. No-ops outside trading hours."""
+        if not self._is_trading_hours():
+            logger.debug("Hourly update skipped — outside trading hours")
+            return
+
+        logger.info("Sending hourly Telegram update …")
+        try:
+            signals = self._db.get_signals_since(hours=1)
+            account = self._broker.get_account()
+            positions = self._broker.get_positions()
+            open_orders = self._broker.get_orders(status="open")
+            send_hourly_update(signals, account, positions, open_orders)
+        except Exception:
+            logger.exception("Failed to build/send hourly update")
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
@@ -234,6 +286,14 @@ class BotScheduler:
             trigger="interval",
             seconds=settings.POSITION_MONITOR_INTERVAL_SECONDS,
             id="position_monitor",
+            max_instances=1,
+            coalesce=True,
+        )
+        self._scheduler.add_job(
+            self._hourly_update,
+            trigger="interval",
+            seconds=3600,
+            id="hourly_update",
             max_instances=1,
             coalesce=True,
         )

@@ -269,6 +269,20 @@ class Database:
             logger.exception("Failed to fetch signals")
             return []
 
+    def get_signals_since(self, hours: int = 1) -> list[dict]:
+        """Return all signals created in the last `hours` hours (UTC), newest first."""
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        try:
+            rows = self._conn.execute(
+                "SELECT * FROM signals WHERE created_at >= ? ORDER BY id DESC",
+                (cutoff,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            logger.exception("Failed to fetch signals since %d hours ago", hours)
+            return []
+
     def get_pending_signals(self) -> list[dict]:
         """Return all signals with status='pending', oldest first."""
         try:

@@ -291,8 +291,8 @@ class BotScheduler:
         )
         self._scheduler.add_job(
             self._hourly_update,
-            trigger="interval",
-            seconds=3600,
+            trigger="cron",
+            minute=0,
             id="hourly_update",
             max_instances=1,
             coalesce=True,
@@ -309,6 +309,8 @@ class BotScheduler:
 
         # Run one cycle immediately so we don't wait a full interval on startup
         self._poll()
+        # Send an hourly update immediately on startup (if within trading hours)
+        self._hourly_update()
 
         # Block the main thread until shutdown is requested
         self._stop_event.wait()

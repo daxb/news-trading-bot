@@ -1,4 +1,4 @@
-# Macro Trader Bot
+# FIONA — Fast Inference On News Alpha
 
 A news-driven algorithmic trading bot that ingests macro-economic and geopolitical news, scores it with FinBERT sentiment analysis, and executes paper trades across equities (Alpaca), forex (OANDA), and commodities.
 

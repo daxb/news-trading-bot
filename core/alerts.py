@@ -159,7 +159,7 @@ def send_startup_alert() -> None:
             _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
             json={
                 "chat_id": settings.TELEGRAM_CHAT_ID,
-                "text": "🟢 *Macro Trader Bot — started*",
+                "text": "🟢 *FIONA — started*",
                 "parse_mode": "Markdown",
             },
             timeout=10,
@@ -179,7 +179,7 @@ def send_shutdown_alert() -> None:
             _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
             json={
                 "chat_id": settings.TELEGRAM_CHAT_ID,
-                "text": "🔴 *Macro Trader Bot — shutting down*",
+                "text": "🔴 *FIONA — shutting down*",
                 "parse_mode": "Markdown",
             },
             timeout=10,

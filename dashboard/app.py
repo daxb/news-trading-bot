@@ -1,5 +1,5 @@
 """
-Streamlit monitoring dashboard for the Macro Trader bot.
+Streamlit monitoring dashboard for the FIONA bot.
 
 Displays live portfolio state, signal history, recent news, and macro
 indicators — all sourced from the same SQLite DB and APIs used by the bot.
@@ -27,7 +27,7 @@ from core.macro import MacroClient
 # ---------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="Macro Trader",
+    page_title="FIONA",
     page_icon="📈",
     layout="wide",
 )
@@ -115,7 +115,7 @@ def _utc_now() -> str:
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    st.title("📈 Macro Trader")
+    st.title("📈 FIONA")
     st.caption(f"Updated: {_utc_now()}")
 
     if st.button("🔄 Refresh", width='stretch'):

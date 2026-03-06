@@ -42,7 +42,7 @@ def main() -> None:
     logger = logging.getLogger(__name__)
 
     logger.info("=" * 60)
-    logger.info("  Macro Trader Bot — starting up")
+    logger.info("  FIONA — starting up")
     logger.info("=" * 60)
 
     bot = BotScheduler()

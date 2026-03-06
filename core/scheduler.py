@@ -1,5 +1,5 @@
 """
-APScheduler polling loop for the Macro Trader bot.
+APScheduler polling loop for FIONA (Fast Inference On News Alpha).
 
 Wires the full pipeline together:
   NewsClient + RSSClient → SentimentAnalyzer → SignalGenerator → RiskManager → BrokerClient → Database

@@ -1,4 +1,4 @@
-# CLAUDE.md — News-Driven Geopolitical Trading Bot
+# CLAUDE.md — FIONA (Fast Inference On News Alpha)
 
 ## Project Overview
 

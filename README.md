@@ -273,8 +273,8 @@ The Streamlit dashboard runs on port 8501. It has four tabs:
 
 **Audit tab**
 - Rolling signal quality metrics (configurable window: 6h / 12h / 24h / 48h)
-- Anomaly detection alerts (high skip rate, theme concentration, missing feeds, position accumulation)
-- Per-theme signal breakdown with skip rate and average confidence
+- Anomaly detection alerts (high skip rate, high expiry rate, theme concentration, missing feeds, position accumulation)
+- Per-theme signal breakdown with skip rate, expiry rate, and average confidence
 - Pipeline health: article counts by source
 - Trade P&L by theme (closed positions only)
 

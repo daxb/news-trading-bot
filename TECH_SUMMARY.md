@@ -1,7 +1,7 @@
 # Technical Implementation Summary
 ## News-Driven Macro Trading Bot
 
-**Last updated:** 2026-03-06 | **Status:** Phase 4 — Deployed to Fly.io
+**Last updated:** 2026-03-07 | **Status:** Phase 4 — Deployed to Fly.io
 
 ---
 
@@ -35,12 +35,12 @@ News Sources → Dedup/Filter → FinBERT Sentiment → Signal Rules → Risk Ch
 | `core/macro_context.py` | FRED-based regime filter; adjusts signal confidence by macro state |
 | `core/risk_manager.py` | Trade count cap, daily loss limit, percent-of-equity position sizing |
 | `core/exit_manager.py` | Trailing stops and time-based exits (default: 4-hour max hold) |
-| `core/broker.py` | Alpaca paper/live wrapper (account, positions, market orders) |
+| `core/broker.py` | Alpaca paper/live wrapper (account, positions, orders, portfolio history) |
 | `core/forex.py` | OANDA wrapper; forex and commodities (EUR/USD, XAU/USD, BCO/USD) |
 | `core/db.py` | SQLite repository; stores articles, signals, execution status |
-| `core/alerts.py` | Telegram signal alerts and hourly P&L digest (market hours only) |
+| `core/alerts.py` | Telegram signal alerts, hourly P&L digest (09:30–16:00 ET), and open orders summary |
 | `config/settings.py` | All config loaded from `.env`; no hardcoded values anywhere else |
-| `dashboard/app.py` | Streamlit monitoring dashboard |
+| `dashboard/app.py` | Streamlit dashboard: signals, positions, open orders, portfolio value + return % charts (1D/1W/1M/3M/1Y) |
 
 ---
 
@@ -81,7 +81,7 @@ News Sources → Dedup/Filter → FinBERT Sentiment → Signal Rules → Risk Ch
 
 6. **Signal generation** — `SignalGenerator.generate_signals()` applies the priority rule table. First matching rule wins. Confidence = `sentiment_score × rule.confidence_mult`. Signals below `SIGNAL_CONVICTION_THRESHOLD` (default 0.4) are dropped.
 
-7. **Macro context adjustment** — `MacroContext.adjust_signals()` scales confidence up or down based on FRED indicators (fed funds rate, unemployment, yield curve, VIX, credit spreads). Refreshes FRED data every 12 cycles.
+7. **Macro context adjustment** — `MacroContext.adjust_signals()` scales confidence up or down based on 14 FRED indicators across four categories: *Policy* (fed funds rate), *Growth/Labour* (unemployment, jobless claims, consumer sentiment), *Rates/Spreads* (10Y–2Y yield curve, HY credit spreads, 5Y inflation expectations), and *Risk/FX* (VIX, USD index). Twelve rules map these regime readings to confidence boosts or penalties per signal theme. FRED data refreshes every 12 cycles (~1 hr).
 
 8. **Persist and execute** — Signals are saved to SQLite. For each signal, `RiskManager.can_trade()` is called. If approved, `position_qty()` sizes the position, and a market order is submitted to Alpaca or OANDA depending on the ticker format (`_` in ticker → forex).
 

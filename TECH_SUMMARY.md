@@ -31,7 +31,7 @@ News Sources → Dedup/Filter → FinBERT Sentiment → Signal Rules → Risk Ch
 | `core/rss.py` | Concurrent RSS fetcher (BBC, CNBC, MarketWatch, Yahoo Finance) |
 | `core/dedup.py` | Two-pass dedup: DB ID check, then Jaccard headline similarity |
 | `core/sentiment.py` | FinBERT wrapper (`ProsusAI/finbert`); outputs label + confidence score |
-| `core/signal_gen.py` | Priority rule table (11 themes); keyword match → action mapping |
+| `core/signal_gen.py` | Priority rule table (17 themes); keyword match → action mapping |
 | `core/macro_context.py` | FRED-based regime filter; adjusts signal confidence by macro state |
 | `core/risk_manager.py` | Trade count cap, daily loss limit, percent-of-equity position sizing |
 | `core/exit_manager.py` | Trailing stops and time-based exits (default: 4-hour max hold) |
@@ -39,6 +39,7 @@ News Sources → Dedup/Filter → FinBERT Sentiment → Signal Rules → Risk Ch
 | `core/forex.py` | OANDA wrapper; forex and commodities (EUR/USD, XAU/USD, BCO/USD) |
 | `core/db.py` | SQLite repository; stores articles, signals, execution status |
 | `core/alerts.py` | Telegram signal alerts, hourly P&L digest (09:30–16:00 ET), and open orders summary |
+| `core/auditor.py` | 24-hour metrics (signals, themes, P&L) and anomaly detection (6 checks) |
 | `config/settings.py` | All config loaded from `.env`; no hardcoded values anywhere else |
 | `dashboard/app.py` | Streamlit dashboard: signals, positions, open orders, portfolio value + return % charts (1D/1W/1M/3M/1Y) |
 
@@ -105,6 +106,7 @@ All limits are configurable via `.env`.
 | Max hold time | 4 hours | `MAX_HOLD_HOURS=4.0`; time-based exit in `ExitManager` |
 | Max theme exposure | 15% | `MAX_THEME_EXPOSURE_PCT=0.15` |
 | Max total exposure | 60% | `MAX_TOTAL_EXPOSURE_PCT=0.60` |
+| Min source count | 1 (paper) / 2 (production) | `MIN_SOURCE_COUNT`; corroboration within 4-hour window |
 | Minimum confidence | 0.4 | `SIGNAL_CONVICTION_THRESHOLD=0.4`; drops low-quality signals |
 | Equity-only short guard | — | Sell signals skipped if no existing position (equities only) |
 | Paper trading gate | On by default | `PAPER_TRADING=true`; prints loud warning if disabled |
@@ -113,7 +115,7 @@ The `RiskManager` is stateful: session-start equity is captured at construction 
 
 ---
 
-## 6. Signal Rules (11 Themes)
+## 6. Signal Rules (17 Themes)
 
 Rules are priority-ordered. First match wins.
 
@@ -129,7 +131,13 @@ Rules are priority-ordered. First match wins.
 | `usd_strength` | EUR_USD | 0.80 |
 | `usd_weakness` | EUR_USD | 0.80 |
 | `gold_safe_haven` | XAU_USD | 0.75 |
-| `oil_demand` | BCO_USD | 0.75 |
+| `gold_selloff` | XAU_USD | 0.75 |
+| `gold_inflation_hedge` | XAU_USD | 0.75 |
+| `gold_geopolitical` | XAU_USD | 0.75 |
+| `oil_demand_growth` | BCO_USD | 0.75 |
+| `oil_supply_squeeze` | BCO_USD | 0.75 |
+| `oil_oversupply` | BCO_USD | 0.75 |
+| `oil_geopolitical` | BCO_USD | 0.75 |
 
 The confidence multiplier reflects expected signal reliability — Fed policy rules get 1.0; momentum/market-rally gets 0.65 due to higher noise.
 
@@ -144,3 +152,39 @@ The confidence multiplier reflects expected signal reliability — Fed policy ru
 **Environment** — all secrets injected via `.env` (local) or Fly secrets (deployed). Required keys: `FINNHUB_API_KEY`, `FRED_API_KEY`, `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`. OANDA and Telegram keys are optional; their features degrade gracefully if absent.
 
 **Current status:** Fly.io deployment exists (`fly.toml` committed). Dashboard reachability and live trading confirmation are the remaining Phase 4 items.
+
+---
+
+## 8. Observability & Alerts
+
+### Audit System (`core/auditor.py`)
+
+The auditor runs a 24-hour lookback on the SQLite database and computes:
+
+- **Signal counts** — total signals generated, executed, and skipped
+- **Per-theme breakdown** — signal volume and skip rate by theme
+- **P&L by theme** — realized gain/loss attributed to each signal theme
+- **Pipeline stats** — articles processed, dedup drop rate, pre-filter drop rate
+
+Six anomaly checks run on each audit cycle:
+
+| Check | Trigger Condition |
+|---|---|
+| High skip rate | ≥90% of all signals skipped (risk or confidence rejection) |
+| Theme concentration | Single theme accounts for ≥60% of signals (diversification failure) |
+| Missing feeds | One or more news sources returned zero articles |
+| Position accumulation | ≥3 open positions in the same direction on the same instrument |
+| Pipeline stall | No articles processed in the last 24 hours |
+| Per-theme high skip | Any single theme has a ≥95% skip rate |
+
+### Telegram Alerts (`core/alerts.py`)
+
+| Alert Type | Trigger | Notes |
+|---|---|---|
+| Signal execution | Each executed trade | Ticker, action, quantity, order ID |
+| Hourly digest | 09:30–16:00 ET, top of hour | Open positions, session P&L summary |
+| Exit notification | Each position close | Reason (trailing stop or time-based), realized P&L |
+| Daily audit | 16:10 ET | Full 24-hour metrics and any anomaly flags |
+| Startup/shutdown | Bot start and graceful stop | Confirms pipeline is running or halted |
+
+All Telegram alerts degrade gracefully: if `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` are absent from the environment, alert calls are silently no-ops and the bot continues running normally.

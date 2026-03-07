@@ -57,7 +57,7 @@ news-trading-bot/
 │   ├── rss.py                   # Concurrent RSS feed fetcher
 │   ├── scheduler.py             # APScheduler polling loop (full pipeline)
 │   ├── sentiment.py             # FinBERT sentiment scoring
-│   └── signal_gen.py            # Rule-based event→trade engine (11 themes)
+│   └── signal_gen.py            # Rule-based event→trade engine (17 themes)
 ├── dashboard/
 │   └── app.py                   # Streamlit monitoring dashboard
 ├── scripts/

@@ -172,21 +172,27 @@ All settings are in `config/settings.py` and overridable via environment variabl
 
 ## Trading Signals
 
-The rules engine covers 11 themes mapped to 4 instruments:
+The rules engine covers 17 themes mapped to 4 instruments:
 
-| Theme               | Instrument | Trigger Examples                          |
-|---------------------|------------|-------------------------------------------|
-| `fed_hawkish`       | SPY        | "rate hike", "hawkish", "tightening"      |
-| `fed_dovish`        | SPY        | "rate cut", "dovish", "pivot"             |
-| `jobs_strong`       | SPY        | "nonfarm payroll", "hiring surge"         |
-| `inflation`         | SPY        | "CPI", "consumer prices", "inflationary"  |
-| `recession_risk`    | SPY        | "recession", "GDP falls", "contraction"   |
-| `geopolitical_risk` | SPY        | "war", "sanctions", "invasion"            |
-| `market_rally`      | SPY        | "record high", "bull market"              |
-| `usd_strength`      | EUR_USD    | "dollar surges", "DXY rises"              |
-| `usd_weakness`      | EUR_USD    | "dollar falls", "weak dollar"             |
-| `gold_safe_haven`   | XAU_USD    | "gold rises", "safe haven demand"         |
-| `oil_demand`        | BCO_USD    | "OPEC cuts", "crude rally"                |
+| Theme                  | Instrument | Trigger Examples                                  |
+|------------------------|------------|---------------------------------------------------|
+| `fed_hawkish`          | SPY        | "rate hike", "hawkish", "tightening"              |
+| `fed_dovish`           | SPY        | "rate cut", "dovish", "pivot"                     |
+| `jobs_strong`          | SPY        | "nonfarm payroll", "hiring surge"                 |
+| `inflation`            | SPY        | "CPI", "consumer prices", "inflationary"          |
+| `recession_risk`       | SPY        | "recession", "GDP falls", "contraction"           |
+| `geopolitical_risk`    | SPY        | "war", "sanctions", "invasion"                    |
+| `market_rally`         | SPY        | "record high", "bull market"                      |
+| `usd_strength`         | EUR_USD    | "dollar surges", "DXY rises"                      |
+| `usd_weakness`         | EUR_USD    | "dollar falls", "weak dollar"                     |
+| `gold_safe_haven`      | XAU_USD    | "gold rises", "safe haven demand"                 |
+| `gold_selloff`         | XAU_USD    | "gold drops", "risk-on", "gold tumbles"           |
+| `gold_inflation_hedge` | XAU_USD    | "real yields fall", "inflation hedge", "debasement"|
+| `gold_geopolitical`    | XAU_USD    | "gold spikes", "investors flee to gold"           |
+| `oil_supply_squeeze`   | BCO_USD    | "OPEC cuts", "production cut", "tight supply"     |
+| `oil_demand_growth`    | BCO_USD    | "China oil demand", "fuel demand rises"           |
+| `oil_oversupply`       | BCO_USD    | "oil glut", "OPEC hike", "oil surplus"            |
+| `oil_geopolitical`     | BCO_USD    | "Strait of Hormuz", "pipeline attack", "sanctions"|
 
 ## Risk Management
 

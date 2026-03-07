@@ -21,6 +21,7 @@ from oandapyV20.endpoints.accounts import AccountSummary
 from oandapyV20.endpoints.orders import OrderCreate
 from oandapyV20.endpoints.positions import OpenPositions, PositionClose, PositionDetails
 from oandapyV20.endpoints.pricing import PricingInfo
+from oandapyV20.endpoints.transactions import TransactionList
 from oandapyV20.exceptions import V20Error
 
 from config import settings
@@ -192,6 +193,34 @@ class ForexBroker:
         except Exception:
             logger.exception("Failed to submit OANDA order: %s %s", side, instrument)
             return {}
+
+    def get_recent_trades(self, limit: int = 100) -> list[dict]:
+        """
+        Return the most recent filled orders from OANDA as a list of dicts
+        with the same keys used by BrokerClient.get_orders() so the dashboard
+        can merge both sources.
+        """
+        try:
+            r = TransactionList(self._account_id, params={"type": "ORDER_FILL"})
+            self._client.request(r)
+            fills = r.response.get("transactions", [])
+            result = []
+            for t in fills[-limit:]:
+                result.append({
+                    "id":               t.get("id", ""),
+                    "symbol":           t.get("instrument", ""),
+                    "qty":              str(abs(int(t.get("units", 0)))),
+                    "side":             "buy" if int(t.get("units", 0)) > 0 else "sell",
+                    "type":             "market",
+                    "status":           "filled",
+                    "submitted_at":     t.get("time", ""),
+                    "filled_at":        t.get("time", ""),
+                    "filled_avg_price": t.get("price", None),
+                })
+            return list(reversed(result))  # newest first
+        except Exception:
+            logger.exception("Failed to fetch OANDA recent trades")
+            return []
 
     def close_position(self, instrument: str) -> dict:
         """Close the entire open position for an instrument (long or short)."""

@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import settings
 from core.broker import BrokerClient
 from core.db import Database
+from core.forex import ForexBroker
 from core.macro import MacroClient
 
 # ---------------------------------------------------------------------------
@@ -51,6 +52,14 @@ def get_macro() -> MacroClient:
     return MacroClient()
 
 
+@st.cache_resource
+def get_forex() -> ForexBroker | None:
+    try:
+        return ForexBroker()
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Data fetchers (cached with TTL so a manual refresh busts the cache)
 # ---------------------------------------------------------------------------
@@ -61,8 +70,20 @@ def fetch_account() -> dict:
 
 
 @st.cache_data(ttl=30)
+def fetch_forex_account() -> dict:
+    client = get_forex()
+    return client.get_account() if client else {}
+
+
+@st.cache_data(ttl=30)
 def fetch_positions() -> list[dict]:
     return get_broker().get_positions()
+
+
+@st.cache_data(ttl=30)
+def fetch_forex_positions() -> list[dict]:
+    client = get_forex()
+    return client.get_positions() if client else []
 
 
 @st.cache_data(ttl=30)
@@ -72,8 +93,15 @@ def fetch_open_orders() -> list[dict]:
 
 @st.cache_data(ttl=30)
 def fetch_closed_orders(limit: int) -> list[dict]:
-    orders = get_broker().get_orders(status="closed")
-    return orders[:limit]
+    alpaca = get_broker().get_orders(status="closed")
+    forex_client = get_forex()
+    oanda = forex_client.get_recent_trades(limit=limit) if forex_client else []
+    combined = sorted(
+        alpaca + oanda,
+        key=lambda o: o.get("filled_at") or o.get("submitted_at") or "",
+        reverse=True,
+    )
+    return combined[:limit]
 
 
 @st.cache_data(ttl=30)
@@ -180,21 +208,30 @@ with tab_portfolio:
     # Fetch account and positions in parallel — both are network calls and
     # independent of each other, so there's no reason to wait serially.
     with st.spinner("Loading portfolio…"):
-        with ThreadPoolExecutor(max_workers=3) as ex:
-            f_account   = ex.submit(fetch_account)
-            f_positions = ex.submit(fetch_positions)
-            f_orders    = ex.submit(fetch_open_orders)
-        account   = f_account.result()
-        positions = f_positions.result()
-        orders    = f_orders.result()
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            f_account        = ex.submit(fetch_account)
+            f_forex_account  = ex.submit(fetch_forex_account)
+            f_positions      = ex.submit(fetch_positions)
+            f_forex_positions = ex.submit(fetch_forex_positions)
+            f_orders         = ex.submit(fetch_open_orders)
+        account         = f_account.result()
+        forex_account   = f_forex_account.result()
+        positions       = f_positions.result()
+        forex_positions = f_forex_positions.result()
+        orders          = f_orders.result()
 
     if not account:
         st.error("Could not load account data — check Alpaca API keys.")
     else:
-        equity      = account.get("equity", 0)
-        last_equity = account.get("last_equity", 0)
-        daily_pl    = equity - last_equity
-        daily_pct   = (daily_pl / last_equity * 100) if last_equity else 0
+        alpaca_equity   = account.get("equity", 0)
+        oanda_equity    = forex_account.get("equity", 0)
+        total_equity    = alpaca_equity + oanda_equity
+
+        last_equity     = account.get("last_equity", 0)
+        daily_pl        = alpaca_equity - last_equity
+        daily_pct       = (daily_pl / last_equity * 100) if last_equity else 0
+
+        oanda_unreal_pl = sum(p.get("unrealized_pl", 0) for p in forex_positions)
 
         created_at_raw = account.get("created_at", "")
         try:
@@ -204,26 +241,32 @@ with tab_portfolio:
             days_active = None
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Portfolio Value", f"${account.get('portfolio_value', 0):,.2f}")
-        c2.metric("Cash",            f"${account.get('cash', 0):,.2f}")
-        c3.metric("Buying Power",    f"${account.get('buying_power', 0):,.2f}")
-        c4.metric("Equity",          f"${equity:,.2f}")
+        c1.metric("Total Equity",       f"${total_equity:,.2f}",
+                  help="Alpaca + OANDA combined")
+        c2.metric("Alpaca Equity",       f"${alpaca_equity:,.2f}")
+        c3.metric("OANDA NAV",           f"${oanda_equity:,.2f}" if forex_account else "—",
+                  help="OANDA account NAV (not available if OANDA keys absent)")
+        c4.metric("Days Active",         str(days_active) if days_active is not None else "—")
 
-        d1, d2, d3 = st.columns(3)
+        d1, d2, d3, d4 = st.columns(4)
         d1.metric(
-            "Daily P&L",
+            "Alpaca Cash",
+            f"${account.get('cash', 0):,.2f}",
+        )
+        d2.metric(
+            "OANDA Cash",
+            f"${forex_account.get('cash', 0):,.2f}" if forex_account else "—",
+        )
+        d3.metric(
+            "Alpaca Daily P&L",
             f"${daily_pl:+,.2f}",
             delta=f"{daily_pct:+.2f}%",
             delta_color="normal",
         )
-        d2.metric(
-            "Cumulative P&L",
-            f"${equity - account.get('portfolio_value', equity):+,.2f}",
-            help="Equity minus current portfolio value (unrealized gains/losses)",
-        )
-        d3.metric(
-            "Days Active",
-            str(days_active) if days_active is not None else "—",
+        d4.metric(
+            "OANDA Unrealized P&L",
+            f"${oanda_unreal_pl:+,.2f}" if forex_account else "—",
+            help="Sum of unrealized P&L across all open OANDA positions",
         )
 
     @st.fragment
@@ -256,22 +299,36 @@ with tab_portfolio:
 
     st.subheader("Open Positions")
 
-    if not positions:
+    all_position_rows = []
+    for p in positions:
+        all_position_rows.append({
+            "Broker":         "Alpaca",
+            "Symbol":         p["symbol"],
+            "Qty":            p["qty"],
+            "Side":           p["side"],
+            "Entry Price":    f"${p['avg_entry_price']:,.2f}",
+            "Current Price":  f"${p['current_price']:,.2f}",
+            "Market Value":   f"${p['market_value']:,.2f}",
+            "Unrealized P&L": f"${p['unrealized_pl']:,.2f}",
+            "P&L %":          f"{p['unrealized_plpc'] * 100:.2f}%",
+        })
+    for p in forex_positions:
+        all_position_rows.append({
+            "Broker":         "OANDA",
+            "Symbol":         p["instrument"],
+            "Qty":            str(abs(p["units"])),
+            "Side":           p["side"],
+            "Entry Price":    "—",
+            "Current Price":  "—",
+            "Market Value":   "—",
+            "Unrealized P&L": f"${p['unrealized_pl']:,.2f}",
+            "P&L %":          "—",
+        })
+
+    if not all_position_rows:
         st.info("No open positions.")
     else:
-        rows = []
-        for p in positions:
-            rows.append({
-                "Symbol":        p["symbol"],
-                "Qty":           p["qty"],
-                "Side":          p["side"],
-                "Entry Price":   f"${p['avg_entry_price']:,.2f}",
-                "Current Price": f"${p['current_price']:,.2f}",
-                "Market Value":  f"${p['market_value']:,.2f}",
-                "Unrealized P&L": f"${p['unrealized_pl']:,.2f}",
-                "P&L %":         f"{p['unrealized_plpc'] * 100:.2f}%",
-            })
-        st.dataframe(rows, width='stretch', hide_index=True)
+        st.dataframe(all_position_rows, width='stretch', hide_index=True)
 
     st.subheader("Open Orders")
 

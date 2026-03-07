@@ -8,7 +8,7 @@ confidence is below the configured threshold.
 Design decisions
 ----------------
 - Rule-based (no ML) for MVP: transparent and debuggable
-- Single ticker per signal (SPY for all equity rules at MVP stage)
+- Single ticker per signal (SPY for equity rules, OANDA format for forex/commodities)
 - First-matching rule wins (rules are ordered by priority)
 - "hold" actions are suppressed — no signal returned, nothing stored
 - Confidence = sentiment_score × rule confidence_multiplier
@@ -152,6 +152,7 @@ _RULES: list[dict] = [
         "keywords": [
             "gold rises", "gold surges", "gold rally", "gold hits",
             "safe haven demand", "flight to gold", "bullion rises",
+            "gold record", "gold all-time high",
         ],
         "actions": {"positive": "buy", "negative": "sell", "neutral": None},
         "confidence_mult": 0.75,
@@ -159,15 +160,93 @@ _RULES: list[dict] = [
         "description": "Safe-haven demand drives gold higher",
     },
     {
-        "theme": "oil_demand",
+        "theme": "gold_selloff",
+        "keywords": [
+            "gold falls", "gold drops", "gold declines", "gold slides",
+            "gold tumbles", "bullion falls", "gold loses", "gold weakens",
+            "risk appetite", "risk-on", "gold selling",
+        ],
+        "actions": {"positive": None, "negative": "sell", "neutral": None},
+        "confidence_mult": 0.75,
+        "ticker": "XAU_USD",
+        "description": "Risk-on sentiment or dollar strength pressures gold lower",
+    },
+    {
+        "theme": "gold_inflation_hedge",
+        "keywords": [
+            "gold inflation", "inflation hedge", "real yields fall",
+            "negative real rates", "money printing", "monetary expansion",
+            "central bank gold", "gold demand", "debasement",
+        ],
+        "actions": {"positive": "buy", "negative": "sell", "neutral": None},
+        "confidence_mult": 0.70,
+        "ticker": "XAU_USD",
+        "description": "Gold as an inflation hedge when real yields fall",
+    },
+    {
+        "theme": "gold_geopolitical",
+        "keywords": [
+            "middle east tensions", "war escalation", "nuclear",
+            "gold safe", "investors flee to gold", "crisis gold",
+            "gold jumps on", "gold spikes",
+        ],
+        "actions": {"positive": "buy", "negative": "buy", "neutral": None},
+        "confidence_mult": 0.70,
+        "ticker": "XAU_USD",
+        "description": "Geopolitical crisis drives safe-haven flows into gold",
+    },
+
+    # ------------------------------------------------------------------
+    # Oil / Crude (BCO_USD via OANDA)
+    # ------------------------------------------------------------------
+    {
+        "theme": "oil_supply_squeeze",
         "keywords": [
             "oil rises", "crude rises", "oil prices surge", "crude rally",
-            "opec cuts", "supply cut", "oil demand", "energy prices rise",
+            "opec cuts", "supply cut", "oil supply falls", "energy prices rise",
+            "oil shortage", "tight supply", "production cut",
         ],
         "actions": {"positive": "buy", "negative": "sell", "neutral": None},
         "confidence_mult": 0.75,
         "ticker": "BCO_USD",
-        "description": "Supply constraints or demand surge drives crude higher",
+        "description": "Supply constraints drive crude prices higher",
+    },
+    {
+        "theme": "oil_demand_growth",
+        "keywords": [
+            "oil demand", "fuel demand", "energy demand rises",
+            "china oil demand", "global oil demand", "travel demand",
+            "jet fuel demand", "oil consumption rises",
+        ],
+        "actions": {"positive": "buy", "negative": "sell", "neutral": None},
+        "confidence_mult": 0.70,
+        "ticker": "BCO_USD",
+        "description": "Rising demand outlook supports crude prices",
+    },
+    {
+        "theme": "oil_oversupply",
+        "keywords": [
+            "oil falls", "crude falls", "oil drops", "oil glut",
+            "oversupply", "opec increases output", "opec hike",
+            "oil surplus", "oil inventories rise", "crude slides",
+            "oil tumbles", "energy selloff",
+        ],
+        "actions": {"positive": None, "negative": "sell", "neutral": None},
+        "confidence_mult": 0.75,
+        "ticker": "BCO_USD",
+        "description": "Oversupply or demand destruction pushes crude lower",
+    },
+    {
+        "theme": "oil_geopolitical",
+        "keywords": [
+            "middle east oil", "strait of hormuz", "pipeline attack",
+            "sanctions on oil", "oil embargo", "russia oil",
+            "opec war", "oil field attack", "energy sanctions",
+        ],
+        "actions": {"positive": "buy", "negative": "buy", "neutral": None},
+        "confidence_mult": 0.80,
+        "ticker": "BCO_USD",
+        "description": "Geopolitical supply disruption risk drives crude higher",
     },
 ]
 

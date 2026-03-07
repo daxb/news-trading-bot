@@ -18,6 +18,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import settings
+from core.auditor import compute_metrics
 from core.broker import BrokerClient
 from core.db import Database
 from core.forex import ForexBroker
@@ -200,7 +201,7 @@ with st.sidebar:
 # Main content
 # ---------------------------------------------------------------------------
 
-tab_portfolio, tab_signals, tab_news = st.tabs(["Portfolio", "Signals", "News"])
+tab_portfolio, tab_signals, tab_news, tab_audit = st.tabs(["Portfolio", "Signals", "News", "Audit"])
 
 # ── Portfolio ────────────────────────────────────────────────────────────────
 
@@ -464,3 +465,86 @@ with tab_signals:
 
 with tab_news:
     render_news_tab()
+
+# ── Audit ─────────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=300)
+def fetch_audit_metrics(hours: int) -> dict:
+    return compute_metrics(get_db(), hours=hours)
+
+
+with tab_audit:
+    col_ah1, col_ah2 = st.columns([3, 1])
+    with col_ah1:
+        st.subheader("Audit Report")
+    with col_ah2:
+        audit_hours = st.selectbox("Window", [6, 12, 24, 48], index=2, key="audit_hours")
+
+    with st.spinner("Computing metrics…"):
+        audit = fetch_audit_metrics(audit_hours)
+
+    sigs = audit["signals"]
+    pipeline = audit["pipeline"]
+    themes = audit["themes"]
+    pnl = audit["pnl_by_theme"]
+    anomalies = audit["anomalies"]
+
+    # Top-line signal metrics
+    a1, a2, a3, a4 = st.columns(4)
+    a1.metric("Signals (total)",    sigs["total"])
+    a2.metric("Executed",           sigs["executed"])
+    a3.metric("Skipped",            sigs["skipped"])
+    a4.metric("Skip Rate",          f"{sigs['skip_rate']:.0%}")
+
+    # Anomalies
+    if anomalies:
+        st.subheader("Anomalies")
+        for a in anomalies:
+            st.warning(a)
+    else:
+        st.success("No anomalies detected.")
+
+    # Per-theme breakdown
+    if themes:
+        st.subheader("Signal Quality by Theme")
+        theme_rows = []
+        for theme, data in sorted(themes.items(), key=lambda x: -x[1]["total"]):
+            theme_rows.append({
+                "Theme":        theme,
+                "Total":        data["total"],
+                "Executed":     data["executed"],
+                "Skipped":      data["skipped"],
+                "Skip Rate":    f"{data['skip_rate']:.0%}",
+                "Avg Conf":     f"{data['avg_confidence']:.3f}",
+            })
+        st.dataframe(theme_rows, width="stretch", hide_index=True)
+
+    # Pipeline health
+    st.subheader("Pipeline Health")
+    p1, p2, p3 = st.columns(3)
+    p1.metric("Articles ingested",    pipeline["total_articles"])
+    p2.metric("Articles per signal",  pipeline["articles_per_signal"])
+    p3.metric("Sources active",       len(pipeline["by_source"]))
+
+    if pipeline["by_source"]:
+        source_rows = [
+            {"Source": src, "Articles": cnt}
+            for src, cnt in sorted(pipeline["by_source"].items(), key=lambda x: -x[1])
+        ]
+        st.dataframe(source_rows, width="stretch", hide_index=True)
+
+    # P&L by theme
+    if pnl:
+        st.subheader("Trade P&L by Theme")
+        pnl_rows = []
+        for theme, data in sorted(pnl.items(), key=lambda x: -x[1]["count"]):
+            sign = "+" if data["avg_return_pct"] >= 0 else ""
+            pnl_rows.append({
+                "Theme":       theme,
+                "Trades":      data["count"],
+                "Win Rate":    f"{data['win_rate']:.0%}",
+                "Avg Return":  f"{sign}{data['avg_return_pct']:.2f}%",
+            })
+        st.dataframe(pnl_rows, width="stretch", hide_index=True)
+    else:
+        st.info("No closed trades with fill and exit prices recorded yet.")

@@ -159,6 +159,12 @@ class ExitManager:
         broker = self._forex if is_forex else self._broker
         order = broker.close_position(ticker)
         if order:
+            # Record exit price against the originating signal for P&L tracking
+            exit_price = broker.get_latest_price(ticker)
+            if exit_price:
+                signal = self._db.get_last_executed_signal(ticker)
+                if signal:
+                    self._db.update_signal_exit_price(signal["id"], exit_price)
             # Clear peak tracking for this position
             self._peak_prices.pop(ticker, None)
             send_exit_alert(ticker, reason, order.get("id", ""))

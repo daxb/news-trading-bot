@@ -190,6 +190,85 @@ def send_shutdown_alert() -> None:
         logger.exception("Failed to send Telegram shutdown alert")
 
 
+def send_audit_report(metrics: dict) -> None:
+    """Send the daily audit report to Telegram."""
+    if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
+        logger.debug("Telegram not configured — skipping audit report")
+        return
+
+    hours = metrics.get("period_hours", 24)
+    sigs = metrics.get("signals", {})
+    pipeline = metrics.get("pipeline", {})
+    themes = metrics.get("themes", {})
+    pnl = metrics.get("pnl_by_theme", {})
+    anomalies = metrics.get("anomalies", [])
+
+    total = sigs.get("total", 0)
+    executed = sigs.get("executed", 0)
+    skipped = sigs.get("skipped", 0)
+    skip_rate = sigs.get("skip_rate", 0.0)
+
+    lines = [f"*FIONA Audit — last {hours}h*\n"]
+
+    # Signals summary
+    lines.append(
+        f"*Signals*  {total} total | {executed} executed | {skipped} skipped "
+        f"| skip rate {skip_rate:.0%}"
+    )
+
+    # Per-theme breakdown (sorted by total desc, cap at 8)
+    if themes:
+        lines.append("\n*By Theme*")
+        for theme, data in sorted(themes.items(), key=lambda x: -x[1]["total"])[:8]:
+            lines.append(
+                f"  `{theme}`: {data['executed']} exec / {data['total']} total "
+                f"({data['skip_rate']:.0%} skip, conf {data['avg_confidence']:.2f})"
+            )
+
+    # Pipeline health
+    total_articles = pipeline.get("total_articles", 0)
+    by_source = pipeline.get("by_source", {})
+    src_str = "  " + " | ".join(
+        f"{src}: {cnt}" for src, cnt in sorted(by_source.items(), key=lambda x: -x[1])
+    )
+    lines.append(f"\n*Pipeline*  {total_articles} articles")
+    if by_source:
+        lines.append(src_str)
+
+    # P&L by theme
+    if pnl:
+        lines.append("\n*P&L by Theme* (closed trades)")
+        for theme, data in sorted(pnl.items(), key=lambda x: -x[1]["count"]):
+            sign = "+" if data["avg_return_pct"] >= 0 else ""
+            lines.append(
+                f"  `{theme}`: {data['count']} trades | "
+                f"win {data['win_rate']:.0%} | {sign}{data['avg_return_pct']:.2f}% avg"
+            )
+
+    # Anomalies
+    if anomalies:
+        lines.append("\n*Anomalies*")
+        for a in anomalies:
+            lines.append(f"  • {a}")
+
+    text = "\n".join(lines)
+
+    try:
+        resp = requests.post(
+            _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
+            json={
+                "chat_id": settings.TELEGRAM_CHAT_ID,
+                "text": text,
+                "parse_mode": "Markdown",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        logger.info("Telegram audit report sent")
+    except Exception:
+        logger.exception("Failed to send Telegram audit report")
+
+
 def send_exit_alert(ticker: str, reason: str, order_id: str = "") -> None:
     """Post a position-exit notification to Telegram."""
     if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:

@@ -72,7 +72,9 @@ CREATE TABLE IF NOT EXISTS signals (
     rationale   TEXT,
     status      TEXT NOT NULL DEFAULT 'pending',
     created_at  TEXT,
-    executed_at TEXT
+    executed_at TEXT,
+    fill_price  REAL,
+    exit_price  REAL
 );
 """
 
@@ -102,6 +104,17 @@ class Database:
         with self._conn:
             self._conn.execute(_CREATE_ARTICLES)
             self._conn.execute(_CREATE_SIGNALS)
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        """Add columns introduced after the initial schema. Safe to run on existing DBs."""
+        migrations = [("fill_price", "REAL"), ("exit_price", "REAL")]
+        for col, coltype in migrations:
+            try:
+                self._conn.execute(f"ALTER TABLE signals ADD COLUMN {col} {coltype}")
+                logger.info("Schema migration: added signals.%s", col)
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     # ------------------------------------------------------------------
     # Articles
@@ -299,14 +312,16 @@ class Database:
         signal_id: int,
         status: str,
         executed_at: str | None = None,
+        fill_price: float | None = None,
     ) -> bool:
         """
-        Update a signal's status.
+        Update a signal's status, and optionally its fill price.
 
         Args:
             signal_id:   The signal's primary key.
             status:      One of pending | executed | skipped | expired.
             executed_at: UTC ISO-8601 timestamp (required when status='executed').
+            fill_price:  Approximate fill price at time of execution.
 
         Returns:
             True if exactly one row was updated, False otherwise.
@@ -320,8 +335,8 @@ class Database:
         try:
             with self._conn:
                 cursor = self._conn.execute(
-                    "UPDATE signals SET status = ?, executed_at = ? WHERE id = ?",
-                    (status, executed_at, signal_id),
+                    "UPDATE signals SET status = ?, executed_at = ?, fill_price = ? WHERE id = ?",
+                    (status, executed_at, fill_price, signal_id),
                 )
                 updated = cursor.rowcount == 1
                 if not updated:
@@ -330,6 +345,33 @@ class Database:
         except Exception:
             logger.exception("Failed to update signal id=%d", signal_id)
             return False
+
+    def update_signal_exit_price(self, signal_id: int, exit_price: float) -> bool:
+        """Record the exit price after a position is closed (used for P&L tracking)."""
+        try:
+            with self._conn:
+                cursor = self._conn.execute(
+                    "UPDATE signals SET exit_price = ? WHERE id = ?",
+                    (exit_price, signal_id),
+                )
+                return cursor.rowcount == 1
+        except Exception:
+            logger.exception("Failed to update exit_price for signal id=%d", signal_id)
+            return False
+
+    def get_articles_since(self, hours: int = 24) -> list[dict]:
+        """Return all articles stored in the last `hours` hours, newest first."""
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        try:
+            rows = self._conn.execute(
+                "SELECT * FROM articles WHERE fetched_at >= ? ORDER BY id DESC",
+                (cutoff,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            logger.exception("Failed to fetch articles since %d hours ago", hours)
+            return []
 
     def get_last_executed_signal(self, ticker: str) -> dict | None:
         """Return the most recent executed signal for a ticker, or None."""

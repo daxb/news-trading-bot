@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from config import settings
-from core.alerts import send_hourly_update, send_shutdown_alert, send_signal_alert, send_startup_alert
+from core.alerts import send_audit_report, send_hourly_update, send_shutdown_alert, send_signal_alert, send_startup_alert
 from core.broker import BrokerClient
 from core.db import Database
 from core.dedup import deduplicate
@@ -218,7 +218,14 @@ class BotScheduler:
             order = broker.submit_market_order(sig["ticker"], qty, sig["action"])
             if order:
                 executed_at = datetime.now(timezone.utc).isoformat()
-                self._db.update_signal_status(rowid, "executed", executed_at)
+                # Capture fill price: OANDA returns it directly; for Alpaca
+                # (async fill) we use the last traded price as a close proxy.
+                if is_forex:
+                    fill_price_raw = order.get("price")
+                    fill_price = float(fill_price_raw) if fill_price_raw else None
+                else:
+                    fill_price = broker.get_latest_price(sig["ticker"])
+                self._db.update_signal_status(rowid, "executed", executed_at, fill_price=fill_price)
                 executed_signals += 1
                 send_signal_alert({**sig, "qty": qty, "order_id": order.get("id")})
             else:
@@ -266,6 +273,25 @@ class BotScheduler:
             logger.exception("Failed to build/send hourly update")
 
     # ------------------------------------------------------------------
+    # Daily audit
+    # ------------------------------------------------------------------
+
+    def _daily_audit(self) -> None:
+        """Compute and Telegram-send the 24-hour audit report. Fires at market close."""
+        logger.info("Running daily audit …")
+        try:
+            from core.auditor import compute_metrics
+            metrics = compute_metrics(self._db, hours=24)
+            send_audit_report(metrics)
+            logger.info(
+                "Daily audit complete: %d signals, %d anomalies",
+                metrics["signals"]["total"],
+                len(metrics["anomalies"]),
+            )
+        except Exception:
+            logger.exception("Daily audit failed")
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
@@ -294,6 +320,17 @@ class BotScheduler:
             trigger="cron",
             minute=0,
             id="hourly_update",
+            max_instances=1,
+            coalesce=True,
+        )
+        self._scheduler.add_job(
+            self._daily_audit,
+            trigger="cron",
+            day_of_week="mon-fri",
+            hour=16,
+            minute=10,
+            timezone=self._ET,
+            id="daily_audit",
             max_instances=1,
             coalesce=True,
         )

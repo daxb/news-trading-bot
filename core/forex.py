@@ -21,6 +21,7 @@ from oandapyV20.endpoints.accounts import AccountSummary
 from oandapyV20.endpoints.orders import OrderCreate
 from oandapyV20.endpoints.positions import OpenPositions, PositionClose, PositionDetails
 from oandapyV20.endpoints.pricing import PricingInfo
+from oandapyV20.endpoints.transactions import TransactionsSinceID
 from oandapyV20.exceptions import V20Error
 
 from config import settings
@@ -192,6 +193,44 @@ class ForexBroker:
         except Exception:
             logger.exception("Failed to submit OANDA order: %s %s", side, instrument)
             return {}
+
+    def get_recent_trades(self, limit: int = 100) -> list[dict]:
+        """
+        Return recent filled OANDA orders, newest first.
+
+        Uses TransactionsSinceID seeded from the account's lastTransactionID
+        so we look back a fixed window without needing date arithmetic.
+        """
+        try:
+            # Get the latest transaction ID from account summary
+            r = AccountSummary(self._account_id)
+            self._client.request(r)
+            last_id = int(r.response["account"]["lastTransactionID"])
+            since_id = max(1, last_id - (limit * 10))  # cast a wide net
+
+            r2 = TransactionsSinceID(self._account_id, params={"id": str(since_id)})
+            self._client.request(r2)
+            transactions = r2.response.get("transactions", [])
+
+            fills = [t for t in transactions if t.get("type") == "ORDER_FILL"]
+            result = []
+            for t in fills[-limit:]:
+                units = int(t.get("units", 0))
+                result.append({
+                    "id":               t.get("id", ""),
+                    "symbol":           t.get("instrument", ""),
+                    "qty":              str(abs(units)),
+                    "side":             "buy" if units > 0 else "sell",
+                    "type":             "market",
+                    "status":           "filled",
+                    "submitted_at":     t.get("time", ""),
+                    "filled_at":        t.get("time", ""),
+                    "filled_avg_price": t.get("price", None),
+                })
+            return list(reversed(result))  # newest first
+        except Exception:
+            logger.exception("Failed to fetch OANDA recent trades")
+            return []
 
     def close_position(self, instrument: str) -> dict:
         """Close the entire open position for an instrument (long or short)."""

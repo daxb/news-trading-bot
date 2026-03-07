@@ -94,23 +94,8 @@ def fetch_open_orders() -> list[dict]:
 @st.cache_data(ttl=30)
 def fetch_closed_orders(limit: int) -> list[dict]:
     alpaca = get_broker().get_orders(status="closed")
-    # OANDA trades come from our signals DB (executed signals on OANDA instruments)
-    oanda_signals = get_db().get_signals(limit=limit, status="executed")
-    oanda = [
-        {
-            "id":               str(s["id"]),
-            "symbol":           s["ticker"],
-            "qty":              "—",
-            "side":             s["action"],
-            "type":             "market",
-            "status":           "filled",
-            "submitted_at":     s.get("created_at", ""),
-            "filled_at":        s.get("executed_at", ""),
-            "filled_avg_price": None,
-        }
-        for s in oanda_signals
-        if "_" in (s.get("ticker") or "")
-    ]
+    forex_client = get_forex()
+    oanda = forex_client.get_recent_trades(limit=limit) if forex_client else []
     combined = sorted(
         alpaca + oanda,
         key=lambda o: o.get("filled_at") or o.get("submitted_at") or "",

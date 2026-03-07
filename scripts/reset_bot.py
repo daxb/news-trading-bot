@@ -2,11 +2,17 @@
 """
 Reset the bot to a clean state for paper trading.
 
-Actions:
+What this script does automatically (via API):
   1. Cancel all open Alpaca orders
   2. Close all open Alpaca positions
   3. Close all open OANDA positions (if configured)
   4. Clear the local SQLite database (articles, signals, bot_state)
+
+What requires manual action on each broker's web dashboard:
+  • Alpaca paper balance reset → https://app.alpaca.markets/paper-trading/overview
+      Account → "Reset Paper Account" (restores to $100,000)
+  • OANDA practice balance reset → https://www.oanda.com/demo-account/
+      My Account → Manage Funds → Reset Account
 
 Usage:
     python scripts/reset_bot.py           # prompts for confirmation
@@ -142,6 +148,37 @@ def clear_database() -> None:
 
 
 # ------------------------------------------------------------------
+# Manual steps reminder
+# ------------------------------------------------------------------
+
+def _print_manual_steps() -> None:
+    """Print the steps that require action on each broker's web dashboard."""
+    has_alpaca = bool(settings.ALPACA_API_KEY)
+    has_oanda = bool(settings.OANDA_API_KEY)
+
+    if not (has_alpaca or has_oanda):
+        return
+
+    print("To restore the paper account balance(s) to their starting value,")
+    print("complete the following steps manually:\n")
+
+    if has_alpaca:
+        print("  Alpaca paper balance reset")
+        print("    1. Go to https://app.alpaca.markets/paper-trading/overview")
+        print("    2. Click 'Reset Paper Account' (restores the $100,000 balance)")
+        print()
+
+    if has_oanda:
+        print("  OANDA practice balance reset")
+        print("    1. Log in at https://www.oanda.com")
+        print("    2. Navigate to My Account → Manage Funds → Reset Account")
+        print()
+
+    print("Then restart the bot: python scripts/run_bot.py")
+    print()
+
+
+# ------------------------------------------------------------------
 # Main
 # ------------------------------------------------------------------
 
@@ -163,13 +200,17 @@ def main() -> None:
 
     mode = "paper" if settings.PAPER_TRADING else "LIVE"
     print(f"\n=== FIONA Bot Reset ({mode} mode) ===\n")
-    print("This will:")
+    print("Automated steps (via API):")
     if not args.db_only:
         print("  • Cancel all open Alpaca orders")
         print("  • Close all open Alpaca positions")
         if settings.OANDA_API_KEY:
             print("  • Close all open OANDA positions")
-    print("  • Clear the SQLite database (articles, signals, bot_state)\n")
+    print("  • Clear the SQLite database (articles, signals, bot_state)")
+    print()
+    print("Manual step required afterward (web dashboard):")
+    print("  • Reset paper account balance(s) back to starting value")
+    print()
 
     if not args.yes:
         try:
@@ -197,7 +238,9 @@ def main() -> None:
     logger.info("=== Database ===")
     clear_database()
 
-    print("\nDone. The bot is ready for a clean paper trading session.\n")
+    print("\nAutomated reset complete.")
+    print()
+    _print_manual_steps()
 
 
 if __name__ == "__main__":

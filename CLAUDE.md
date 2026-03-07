@@ -185,6 +185,63 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - Minimum confidence threshold of 0.5 to execute any trade
 - Require 2+ independent news sources before trading
 
+## Log Review Process
+
+### How to Access Fly.io Logs
+
+The app (`trading-bot-lingering-lake-4314`) writes all output to stdout. Fly.io captures it automatically and retains ~24–48 hours of history.
+
+**Quick access (terminal):**
+```bash
+# Live tail
+flyctl logs --app trading-bot-lingering-lake-4314
+
+# Last 500 lines
+flyctl logs --app trading-bot-lingering-lake-4314 -n 500
+
+# Filter for errors inline
+flyctl logs --app trading-bot-lingering-lake-4314 -n 500 | grep ERROR
+```
+
+**Save and summarise with the fetch script:**
+```bash
+python scripts/fetch_logs.py              # fetch last 200 lines → logs/fly_YYYY-MM-DD_HH-MM.txt
+python scripts/fetch_logs.py -n 500       # larger window
+python scripts/fetch_logs.py --errors     # print ERROR lines after saving
+python scripts/fetch_logs.py --signals    # print [SIGNAL] lines after saving
+python scripts/fetch_logs.py --orders     # print [ORDER] lines after saving
+python scripts/fetch_logs.py --risk       # print [RISK] lines after saving
+```
+
+### Structured Log Markers
+
+Key events are tagged so you can grep them instantly:
+
+| Marker | Where | Meaning |
+|--------|-------|---------|
+| `[SIGNAL]` | `core/signal_gen.py` | A trading signal was generated |
+| `[ORDER]` | `core/broker.py`, `core/forex.py` | An order was submitted, filled, rejected, or closed |
+| `[RISK]` | `core/risk_manager.py` | A risk limit fired (daily loss, trade cap) |
+| `ERROR` | All modules | Unexpected exception — investigate immediately |
+| `WARNING` | All modules | Degraded operation — worth reviewing |
+
+### Claude Code Review Workflow
+
+1. **Fetch** the latest logs:
+   ```bash
+   python scripts/fetch_logs.py -n 500
+   ```
+2. **Ask Claude Code** to review the saved file:
+   > "Read `logs/<latest-file>.txt` and summarise any errors, missed signals, and anomalies"
+3. **Drill down** with follow-up questions:
+   > "Show me all [RISK] events in that file and explain what triggered each one"
+   > "Were there any [SIGNAL] lines that did not produce a matching [ORDER]? Why not?"
+4. **Iterate** — Claude Code uses `Read` and `Grep` on the log file to answer precisely.
+
+### Log Retention
+
+Fly.io only keeps ~24–48 hours natively. Run `fetch_logs.py` at least once per day to build a local archive in `logs/` (gitignored). For longer-term retention, consider shipping logs to a free tier of Papertrail or Logtail via a Fly.io log shipper.
+
 ## Legal Notes
 
 - No registration needed for personal algo trading (SEC/FINRA)

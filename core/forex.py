@@ -190,12 +190,12 @@ class ForexBroker:
                 "status":     "filled" if fill else "pending",
             }
             logger.info(
-                "OANDA order filled: %s %d units %s @ %s",
+                "[ORDER] OANDA filled: %s %d units %s @ %s",
                 side.upper(), abs(units), instrument, result.get("price", "?"),
             )
             return result
         except V20Error as e:
-            logger.error("OANDA order rejected for %s: %s", instrument, e)
+            logger.error("[ORDER] OANDA rejected %s: %s", instrument, e)
             return {}
         except Exception:
             logger.exception("Failed to submit OANDA order: %s %s", side, instrument)
@@ -250,7 +250,7 @@ class ForexBroker:
             r = PositionClose(self._account_id, instrument.upper(), data=data)
             self._client.request(r)
             txn_ids = r.response.get("relatedTransactionIDs", [])
-            logger.info("Closed OANDA position: %s", instrument)
+            logger.info("[ORDER] closed OANDA position: %s", instrument)
             return {"id": txn_ids[0] if txn_ids else "", "status": "closed"}
         except V20Error as e:
             logger.error("OANDA close position failed for %s: %s", instrument, e)

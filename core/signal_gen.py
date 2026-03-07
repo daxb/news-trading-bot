@@ -351,7 +351,7 @@ class SignalGenerator:
                 ),
             }
             logger.info(
-                "Signal: %s %s | theme=%s | confidence=%.4f",
+                "[SIGNAL] %s %s | theme=%s | confidence=%.4f",
                 action.upper(), rule["ticker"], rule["theme"], confidence,
             )
             return signal

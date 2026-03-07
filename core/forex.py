@@ -161,7 +161,14 @@ class ForexBroker:
         Returns:
             Order result dict, or {} on failure.
         """
-        units = int(qty) if side.lower() == "buy" else -int(qty)
+        units = round(qty) if side.lower() == "buy" else -round(qty)
+        if abs(units) == 0:
+            logger.warning(
+                "OANDA order aborted — rounded unit count is 0 for %s (raw qty=%.4f). "
+                "Increase MAX_POSITION_PCT or account equity.",
+                instrument, qty,
+            )
+            return {}
 
         order_body = {
             "order": {

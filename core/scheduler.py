@@ -140,6 +140,10 @@ class BotScheduler:
             logger.info("No relevant articles after pre-filter — nothing to process.")
             return
 
+        # Sort newest-first before capping so the most timely articles are
+        # always scored, not whichever source happened to be fetched first.
+        new_articles.sort(key=lambda a: a.get("datetime") or "", reverse=True)
+
         # Cap articles per cycle so FinBERT scoring stays well under the poll interval.
         # 250 articles × ~2 s/article on CPU = 8+ min, blocking subsequent cycles.
         # 50 articles × ~2 s = ~100 s — leaves plenty of headroom.
@@ -176,6 +180,34 @@ class BotScheduler:
             if not rowid:
                 continue
             saved_signals += 1
+
+            # Multi-source corroboration check.
+            # Two corroboration paths are combined:
+            #   1. In-batch: dedup detected the same story from multiple sources
+            #      in this poll cycle and set source_count > 1 on the article.
+            #   2. Cross-cycle: a signal for the same theme+ticker+action was
+            #      already saved by a different source in the last N hours.
+            # Either path alone is sufficient; both are checked.
+            if settings.MIN_SOURCE_COUNT > 1:
+                in_batch = sig.get("source_count", 1)
+                cross_cycle = self._db.count_signal_sources_since(
+                    sig["theme"],
+                    sig["ticker"],
+                    sig["action"],
+                    hours=settings.CORROBORATION_WINDOW_HOURS,
+                )
+                effective_sources = max(in_batch, cross_cycle)
+                if effective_sources < settings.MIN_SOURCE_COUNT:
+                    logger.info(
+                        "Signal pending corroboration: theme=%s %s %s "
+                        "(in_batch=%d, cross_cycle=%d, required=%d, window=%dh)",
+                        sig["theme"], sig["action"].upper(), sig["ticker"],
+                        in_batch, cross_cycle, settings.MIN_SOURCE_COUNT,
+                        settings.CORROBORATION_WINDOW_HOURS,
+                    )
+                    # Leave status as 'pending' — will be re-evaluated when
+                    # a corroborating signal from a different source arrives.
+                    continue
 
             # Route to the correct broker based on instrument format
             is_forex = "_" in sig["ticker"]

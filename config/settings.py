@@ -83,3 +83,9 @@ HY_SPREAD_HIGH = float(os.getenv('HY_SPREAD_HIGH', 4.0))          # HY credit sp
 USD_INDEX_HIGH = float(os.getenv('USD_INDEX_HIGH', 104.0))         # USD trade-weighted index elevated
 ICSA_HIGH = int(os.getenv('ICSA_HIGH', 250000))                    # initial jobless claims elevated
 VIX_HIGH = float(os.getenv('VIX_HIGH', 25.0))                     # VIX elevated (risk-off)
+
+# Multi-source confirmation — minimum distinct sources required before executing a signal.
+# Set to 2 to enforce the stated risk rule; 1 disables the check (paper-trading default).
+MIN_SOURCE_COUNT = int(os.getenv('MIN_SOURCE_COUNT', 1))
+# How far back (hours) to look for corroborating signals from other sources.
+CORROBORATION_WINDOW_HOURS = int(os.getenv('CORROBORATION_WINDOW_HOURS', 4))

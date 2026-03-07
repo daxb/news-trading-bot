@@ -6,11 +6,12 @@ Enforces three guards before any order is submitted:
   2. MAX_DAILY_LOSS_PCT  — pause if portfolio drops too much intraday
   3. Position sizing     — size each order at MAX_POSITION_PCT of equity
 
-The start-of-session equity is recorded at construction and used as the
-daily baseline. It resets when the bot restarts (acceptable for MVP).
+The start-of-session equity baseline is persisted in the DB so a mid-day
+restart does not reset the daily loss guard to the post-crash equity level.
 """
 
 import logging
+from datetime import datetime, timezone
 
 from config import settings
 from core.broker import BrokerClient
@@ -25,8 +26,7 @@ class RiskManager:
     def __init__(self, broker: BrokerClient, db: Database) -> None:
         self._broker = broker
         self._db = db
-        account = broker.get_account()
-        self._start_equity = account.get("equity", 0.0)
+        self._start_equity = self._load_or_init_session_equity()
         logger.info(
             "RiskManager ready — start_equity=%.2f, max_trades/day=%d, "
             "max_daily_loss=%.1f%%, max_position=%.1f%%",
@@ -35,6 +35,35 @@ class RiskManager:
             settings.MAX_DAILY_LOSS_PCT * 100,
             settings.MAX_POSITION_PCT * 100,
         )
+
+    def _load_or_init_session_equity(self) -> float:
+        """
+        Return the session baseline equity for today's daily loss calculation.
+
+        If the DB already holds a baseline for today (UTC), reuse it so that
+        a mid-day bot restart does not reset the loss guard. Otherwise fetch
+        current equity from the broker, persist it, and use it as the baseline.
+        """
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        stored_date = self._db.get_state("session_equity_date")
+        if stored_date == today:
+            stored_val = self._db.get_state("session_equity_value")
+            if stored_val:
+                try:
+                    equity = float(stored_val)
+                    logger.info(
+                        "RiskManager: restored session baseline equity=%.2f from DB", equity
+                    )
+                    return equity
+                except ValueError:
+                    pass  # corrupted value — fall through to re-fetch
+
+        account = self._broker.get_account()
+        equity = account.get("equity", 0.0)
+        self._db.set_state("session_equity_date", today)
+        self._db.set_state("session_equity_value", str(equity))
+        logger.info("RiskManager: new session baseline equity=%.2f", equity)
+        return equity
 
     # ------------------------------------------------------------------
     # Guards

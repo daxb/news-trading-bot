@@ -323,10 +323,10 @@ class SignalGenerator:
             action = rule["actions"].get(sentiment_label)
             if not action:
                 logger.debug(
-                    "Rule '%s' matched but no action for sentiment '%s' — skipping",
+                    "Rule '%s' matched but no action for sentiment '%s' — trying next rule",
                     rule["theme"], sentiment_label,
                 )
-                return None
+                continue
 
             confidence = round(sentiment_score * rule["confidence_mult"], 4)
             if confidence < self._threshold:
@@ -342,6 +342,8 @@ class SignalGenerator:
                 "action": action,
                 "confidence": confidence,
                 "theme": rule["theme"],
+                "source": article.get("source", ""),
+                "source_count": article.get("source_count", 1),
                 "rationale": (
                     f"{sentiment_label.capitalize()} sentiment "
                     f"({sentiment_score:.2f}) on '{rule['theme']}' → "

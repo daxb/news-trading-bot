@@ -66,7 +66,16 @@ def deduplicate(
     threshold: float | None = None,
 ) -> list[dict]:
     """
-    Remove articles whose headline is too similar to one already seen.
+    Remove articles whose headline is too similar to one already seen,
+    while tracking in-batch source corroboration.
+
+    When two articles in the same batch cover the same story (Jaccard ≥ threshold)
+    but come from different sources, the second article is dropped as a duplicate
+    but its source is recorded on the first article's ``source_count`` field.
+    This allows the signal generator to know how many independent sources
+    confirmed the story within a single poll cycle.
+
+    Articles that match a DB headline are dropped unconditionally (already processed).
 
     Args:
         articles:        Incoming articles to filter (already ID-deduped).
@@ -74,42 +83,72 @@ def deduplicate(
         threshold:       Jaccard threshold (defaults to DEDUP_SIMILARITY_THRESHOLD).
 
     Returns:
-        Filtered list with near-duplicate articles removed.
+        Accepted articles, each with an added ``source_count`` int field.
     """
     if threshold is None:
         threshold = settings.DEDUP_SIMILARITY_THRESHOLD
 
-    # Pre-tokenize all seen headlines
-    seen_tokens: list[frozenset[str]] = [_tokenize(h) for h in seen_headlines if h]
+    # Pre-tokenize DB headlines (no source info — pure duplicate suppression)
+    db_tokens: list[frozenset[str]] = [_tokenize(h) for h in seen_headlines if h]
 
     accepted: list[dict] = []
+    # Parallel tracking structures for in-batch comparison
+    accepted_tokens: list[frozenset[str]] = []
+    accepted_sources: list[set[str]] = []   # distinct sources per accepted article
+
     dropped = 0
 
     for article in articles:
         headline = article.get("headline", "")
+        source = article.get("source") or ""
+
         if not headline:
-            accepted.append(article)
+            accepted.append({**article, "source_count": 1})
+            accepted_tokens.append(frozenset())
+            accepted_sources.append({source})
             continue
 
         candidate = _tokenize(headline)
 
-        # Compare against all seen headlines
-        is_duplicate = False
-        for seen in seen_tokens:
-            if _jaccard(candidate, seen) >= threshold:
-                is_duplicate = True
+        # 1. Drop if it matches a DB headline (already processed last cycle)
+        if any(_jaccard(candidate, seen) >= threshold for seen in db_tokens):
+            logger.debug("Dedup (DB): dropped '%s'", headline[:80])
+            dropped += 1
+            continue
+
+        # 2. Check against in-batch accepted articles
+        matched_idx: int | None = None
+        for i, acc_tokens in enumerate(accepted_tokens):
+            if _jaccard(candidate, acc_tokens) >= threshold:
+                matched_idx = i
                 break
 
-        if is_duplicate:
-            logger.debug("Dedup: dropped near-duplicate '%s'", headline[:80])
+        if matched_idx is not None:
+            # Near-duplicate of an already-accepted article in this batch.
+            # If it's from a different source, record the corroboration.
+            if source and source not in accepted_sources[matched_idx]:
+                accepted_sources[matched_idx].add(source)
+                new_count = len(accepted_sources[matched_idx])
+                accepted[matched_idx] = {
+                    **accepted[matched_idx],
+                    "source_count": new_count,
+                }
+                logger.debug(
+                    "Dedup: corroborated '%s' via '%s' (sources=%d)",
+                    headline[:60], source, new_count,
+                )
+            else:
+                logger.debug("Dedup: dropped same-source duplicate '%s'", headline[:80])
             dropped += 1
         else:
-            accepted.append(article)
-            seen_tokens.append(candidate)  # add to seen for in-batch dedup
+            # Unique article — accept and track
+            accepted.append({**article, "source_count": 1})
+            accepted_tokens.append(candidate)
+            accepted_sources.append({source} if source else set())
 
     if dropped:
         logger.info(
-            "Dedup: %d articles in → %d accepted, %d near-duplicates dropped",
+            "Dedup: %d articles in → %d accepted, %d dropped",
             len(articles), len(accepted), dropped,
         )
 

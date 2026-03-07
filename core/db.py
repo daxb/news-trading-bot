@@ -38,6 +38,7 @@ signals
 import logging
 import os
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
 from config import settings
@@ -78,6 +79,13 @@ CREATE TABLE IF NOT EXISTS signals (
 );
 """
 
+_CREATE_BOT_STATE = """
+CREATE TABLE IF NOT EXISTS bot_state (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+"""
+
 _VALID_SIGNAL_STATUSES = {"pending", "executed", "skipped", "expired"}
 
 
@@ -93,6 +101,10 @@ class Database:
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # WAL mode allows concurrent readers (dashboard process) alongside the bot writer.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        # Serialize writes from concurrent scheduler threads (_poll + check_exits).
+        self._write_lock = threading.Lock()
         self._init_schema()
         logger.info("Database ready at %s", path)
 
@@ -104,15 +116,20 @@ class Database:
         with self._conn:
             self._conn.execute(_CREATE_ARTICLES)
             self._conn.execute(_CREATE_SIGNALS)
+            self._conn.execute(_CREATE_BOT_STATE)
         self._migrate_schema()
 
     def _migrate_schema(self) -> None:
         """Add columns introduced after the initial schema. Safe to run on existing DBs."""
-        migrations = [("fill_price", "REAL"), ("exit_price", "REAL")]
-        for col, coltype in migrations:
+        migrations = [
+            ("signals", "fill_price", "REAL"),
+            ("signals", "exit_price", "REAL"),
+            ("signals", "source",     "TEXT"),   # article source for multi-source corroboration
+        ]
+        for table, col, coltype in migrations:
             try:
-                self._conn.execute(f"ALTER TABLE signals ADD COLUMN {col} {coltype}")
-                logger.info("Schema migration: added signals.%s", col)
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
+                logger.info("Schema migration: added %s.%s", table, col)
             except sqlite3.OperationalError:
                 pass  # column already exists
 
@@ -152,7 +169,7 @@ class Database:
             "fetched_at": _now_utc(),
         }
         try:
-            with self._conn:
+            with self._write_lock, self._conn:
                 cursor = self._conn.execute(sql, params)
                 rowid = cursor.lastrowid if cursor.rowcount > 0 else None
                 if rowid:
@@ -229,10 +246,10 @@ class Database:
         sql = """
             INSERT INTO signals
                 (article_id, ticker, action, confidence, theme, rationale,
-                 status, created_at, executed_at)
+                 status, created_at, executed_at, source)
             VALUES
                 (:article_id, :ticker, :action, :confidence, :theme, :rationale,
-                 :status, :created_at, :executed_at)
+                 :status, :created_at, :executed_at, :source)
         """
         params = {
             "article_id": signal.get("article_id"),
@@ -244,9 +261,10 @@ class Database:
             "status": signal.get("status", "pending"),
             "created_at": signal.get("created_at", _now_utc()),
             "executed_at": signal.get("executed_at"),
+            "source": signal.get("source", ""),
         }
         try:
-            with self._conn:
+            with self._write_lock, self._conn:
                 cursor = self._conn.execute(sql, params)
                 logger.debug(
                     "Saved signal: %s %s (confidence=%.2f)",
@@ -333,7 +351,7 @@ class Database:
             )
             return False
         try:
-            with self._conn:
+            with self._write_lock, self._conn:
                 cursor = self._conn.execute(
                     "UPDATE signals SET status = ?, executed_at = ?, fill_price = ? WHERE id = ?",
                     (status, executed_at, fill_price, signal_id),
@@ -349,7 +367,7 @@ class Database:
     def update_signal_exit_price(self, signal_id: int, exit_price: float) -> bool:
         """Record the exit price after a position is closed (used for P&L tracking)."""
         try:
-            with self._conn:
+            with self._write_lock, self._conn:
                 cursor = self._conn.execute(
                     "UPDATE signals SET exit_price = ? WHERE id = ?",
                     (exit_price, signal_id),
@@ -387,17 +405,75 @@ class Database:
             return None
 
     def count_executed_today(self) -> int:
-        """Count signals executed today (UTC date)."""
+        """Count signals executed today (UTC date), keyed on executed_at not created_at."""
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         try:
             row = self._conn.execute(
-                "SELECT COUNT(*) FROM signals WHERE status = 'executed' AND created_at LIKE ?",
+                "SELECT COUNT(*) FROM signals WHERE status = 'executed' AND executed_at LIKE ?",
                 (f"{today}%",),
             ).fetchone()
             return row[0] if row else 0
         except Exception:
             logger.exception("Failed to count today's executed signals")
             return 0
+
+    def count_signal_sources_since(
+        self, theme: str, ticker: str, action: str, hours: int
+    ) -> int:
+        """
+        Return the number of distinct sources that generated a signal with the
+        given theme+ticker+action in the last `hours` hours.
+
+        Used for cross-cycle multi-source corroboration: a signal is only
+        executed when at least MIN_SOURCE_COUNT independent sources have
+        reported the same story within the corroboration window.
+        """
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        try:
+            row = self._conn.execute(
+                """
+                SELECT COUNT(DISTINCT source) FROM signals
+                WHERE theme = ? AND ticker = ? AND action = ?
+                  AND created_at >= ?
+                  AND source IS NOT NULL AND source != ''
+                """,
+                (theme, ticker, action, cutoff),
+            ).fetchone()
+            return row[0] if row else 0
+        except Exception:
+            logger.exception(
+                "Failed to count signal sources for theme=%s ticker=%s action=%s",
+                theme, ticker, action,
+            )
+            return 0
+
+    # ------------------------------------------------------------------
+    # Bot state (key-value store for persistent session metadata)
+    # ------------------------------------------------------------------
+
+    def get_state(self, key: str) -> str | None:
+        """Return the stored string value for `key`, or None if absent."""
+        try:
+            row = self._conn.execute(
+                "SELECT value FROM bot_state WHERE key = ?", (key,)
+            ).fetchone()
+            return row["value"] if row else None
+        except Exception:
+            logger.exception("Failed to read bot_state key=%s", key)
+            return None
+
+    def set_state(self, key: str, value: str) -> None:
+        """Upsert a string value into the key-value store."""
+        try:
+            with self._write_lock, self._conn:
+                self._conn.execute(
+                    "INSERT INTO bot_state (key, value) VALUES (?, ?)"
+                    " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (key, value),
+                )
+        except Exception:
+            logger.exception("Failed to write bot_state key=%s", key)
 
     def close(self) -> None:
         """Close the database connection."""

@@ -161,12 +161,14 @@ The confidence multiplier reflects expected signal reliability — Fed policy ru
 
 The auditor runs a 24-hour lookback on the SQLite database and computes:
 
-- **Signal counts** — total signals generated, executed, and skipped
-- **Per-theme breakdown** — signal volume and skip rate by theme
-- **P&L by theme** — realized gain/loss attributed to each signal theme
+- **Signal counts** — total signals generated, executed, skipped, and expired
+- **Per-theme breakdown** — signal volume, skip rate, and expiry rate by theme
+- **P&L by theme** — realized gain/loss attributed to each signal theme (simple price %, not dollar-weighted)
 - **Pipeline stats** — articles processed, dedup drop rate, pre-filter drop rate
 
-Six anomaly checks run on each audit cycle:
+Each section is independently error-handled: a failure in one (e.g. P&L calculation) produces safe defaults and logs the error rather than crashing the entire report.
+
+Seven anomaly checks run on each audit cycle:
 
 | Check | Trigger Condition |
 |---|---|
@@ -176,6 +178,7 @@ Six anomaly checks run on each audit cycle:
 | Position accumulation | ≥3 open positions in the same direction on the same instrument |
 | Pipeline stall | No articles processed in the last 24 hours |
 | Per-theme high skip | Any single theme has a ≥95% skip rate |
+| High expiry rate | ≥30% of signals expired without execution (timing mismatch) |
 
 ### Telegram Alerts (`core/alerts.py`)
 

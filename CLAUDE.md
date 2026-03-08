@@ -25,7 +25,7 @@ Data Ingestion → NLP/Sentiment → Signal Generation → Order Execution → R
 3. **Signal Generation**: Rule-based event→trade mapping with confidence scoring
 4. **Execution**: Alpaca (equities), OANDA (forex), IBKR (commodities/futures)
 5. **Risk Management**: Position sizing (quarter-Kelly + ATR), circuit breakers, time-based stops
-6. **Monitoring**: Telegram alerts (preferred), Streamlit dashboard, structured logging
+6. **Monitoring**: Telegram alerts (preferred), Streamlit dashboard, structured logging; FRED indicators fetched concurrently (`ThreadPoolExecutor(max_workers=6)`); dashboard uses staggered cache TTLs (45s/60s/90s/120s) to prevent synchronized expiration storms
 
 ## Project Structure
 
@@ -46,11 +46,11 @@ news-trading-bot/
 │   ├── alerts.py                # Telegram signal + exit notifications
 │   ├── backtester.py            # Walk-forward backtest engine (yfinance)
 │   ├── broker.py                # Alpaca wrapper (account, positions, orders)
-│   ├── db.py                    # SQLite schema + repository
+│   ├── db.py                    # SQLite schema + repository; indexes on signals.created_at, signals.status, articles.fetched_at
 │   ├── dedup.py                 # Jaccard headline similarity deduplication
 │   ├── exit_manager.py          # Trailing stops + time-based exits
 │   ├── forex.py                 # OANDA wrapper (forex + commodities)
-│   ├── macro.py                 # FRED wrapper (key indicators, series)
+│   ├── macro.py                 # FRED wrapper (key indicators, series); get_key_indicators() fetches all 13 concurrently via ThreadPoolExecutor(max_workers=6)
 │   ├── macro_context.py         # Regime-aware signal confidence adjustment
 │   ├── news.py                  # Finnhub wrapper (general + company news)
 │   ├── risk_manager.py          # Position sizing, daily loss limit, trade cap
@@ -59,7 +59,7 @@ news-trading-bot/
 │   ├── sentiment.py             # FinBERT sentiment scoring
 │   └── signal_gen.py            # Rule-based event→trade engine (17 themes)
 ├── dashboard/
-│   └── app.py                   # Streamlit monitoring dashboard
+│   └── app.py                   # Streamlit monitoring dashboard; Broker/Macro/Forex clients initialized concurrently on cold start; selective refresh ("Refresh" skips 1hr FRED cache, "Refresh All" clears everything); staggered TTLs per data type
 ├── scripts/
 │   ├── backtest.py              # Walk-forward backtest CLI
 │   ├── run_bot.py               # Main bot entry point
@@ -174,6 +174,7 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - **2–5 minute polling intervals** — news strategies don't need sub-second latency
 - **Quarter-Kelly position sizing** — mathematically sound but conservative
 - **Multi-source confirmation** — never trade on a single headline
+- **Staggered dashboard TTLs** — cache expiry times are intentionally offset per data type (45s signals/articles, 60s broker, 90s forex, 120s FRED macro) so refreshes never all fire at once; "Refresh" preserves the expensive 1hr FRED cache while "Refresh All" clears everything
 
 ## Risk Management Rules
 

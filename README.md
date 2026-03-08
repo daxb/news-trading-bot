@@ -180,6 +180,7 @@ All settings are in `config/settings.py` and overridable via environment variabl
 | `MIN_SOURCE_COUNT`              | 1       | Min distinct sources before executing (set 2 for production) |
 | `CORROBORATION_WINDOW_HOURS`    | 4       | Look-back window for multi-source confirmation |
 | `NEWS_FETCH_TIMEOUT_SECONDS`    | 10      | Per-feed HTTP timeout                        |
+| `THEME_THRESHOLDS`              | `` (empty) | Per-theme conviction overrides, e.g. `oil_geopolitical=0.35,market_rally=0.45` |
 | `PAPER_TRADING`                 | true    | Set to `false` to enable live trading        |
 
 ## Trading Signals
@@ -193,7 +194,7 @@ The rules engine covers 17 themes mapped to 4 instruments:
 | `jobs_strong`          | SPY        | "nonfarm payroll", "hiring surge"                 |
 | `inflation`            | SPY        | "CPI", "consumer prices", "inflationary"          |
 | `recession_risk`       | SPY        | "recession", "GDP falls", "contraction"           |
-| `geopolitical_risk`    | SPY        | "war", "sanctions", "invasion"                    |
+| `geopolitical_risk`    | SPY        | "sanctions", "invasion", "airstrikes", "armed conflict", "declares war" |
 | `market_rally`         | SPY        | "record high", "bull market"                      |
 | `usd_strength`         | EUR_USD    | "dollar surges", "DXY rises"                      |
 | `usd_weakness`         | EUR_USD    | "dollar falls", "weak dollar"                     |
@@ -216,6 +217,7 @@ The rules engine covers 17 themes mapped to 4 instruments:
 - 15% max exposure to any single theme (MAX_THEME_EXPOSURE_PCT)
 - 60% max total portfolio exposure across all open positions (MAX_TOTAL_EXPOSURE_PCT)
 - Short-sell guard: sell signals are skipped if no existing position held (equities only; forex allows native shorting)
+- Per-ticker accumulation guard: additional BUY signals are skipped if a long position is already held in that ticker (equities + forex)
 - Multi-source confirmation: MIN_SOURCE_COUNT=1 for paper trading, set to 2 for production to require corroboration before executing
 - OANDA signals skipped if OANDA keys are not configured
 
@@ -265,7 +267,7 @@ The Streamlit dashboard runs on port 8501. It has four tabs:
 
 **Signals tab**
 - Signal history with executed / skipped / pending / expired status filters
-- Per-signal detail: ticker, theme, confidence score, rationale, timestamps
+- Per-signal detail: ticker, theme, confidence score, rationale, skip reason, timestamps
 
 **News tab**
 - Recent ingested articles filterable by sentiment (positive / negative / neutral)
@@ -274,7 +276,7 @@ The Streamlit dashboard runs on port 8501. It has four tabs:
 **Audit tab**
 - Rolling signal quality metrics (configurable window: 6h / 12h / 24h / 48h)
 - Anomaly detection alerts (high skip rate, high expiry rate, theme concentration, missing feeds, position accumulation)
-- Per-theme signal breakdown with skip rate, expiry rate, and average confidence
+- Per-theme signal breakdown with skip rate, average confidence, and skip reason breakdown (which guard caused each skip)
 - Pipeline health: article counts by source
 - Trade P&L by theme (closed positions only)
 

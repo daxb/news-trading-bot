@@ -1,3 +1,13 @@
+"""
+Configuration for the FIONA trading bot.
+
+All settings are loaded from environment variables (via .env).
+Defaults are set for paper-trading safety — review each value before going live.
+
+Override any setting by adding it to .env or setting it in your deployment
+environment (e.g. `fly secrets set VAR=value` for Fly.io).
+"""
+
 import os
 import sys
 from dotenv import load_dotenv

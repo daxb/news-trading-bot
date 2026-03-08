@@ -29,6 +29,7 @@ Return shape
             "expired": int,
             "skip_rate": float,
             "avg_confidence": float,
+            "skip_reasons": {"<reason>": int, ...},  # counts per skip reason
         },
         ...
     },

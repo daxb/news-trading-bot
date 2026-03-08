@@ -33,6 +33,10 @@ signals
     status          TEXT DEFAULT 'pending'   -- pending | executed | skipped | expired
     created_at      TEXT             -- UTC ISO-8601
     executed_at     TEXT             -- UTC ISO-8601, nullable
+    fill_price      REAL             -- approximate fill price, nullable
+    exit_price      REAL             -- exit price for P&L tracking, nullable
+    source          TEXT             -- article source for multi-source corroboration
+    skip_reason     TEXT             -- why the signal was skipped, nullable
 """
 
 import logging

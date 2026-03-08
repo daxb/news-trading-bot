@@ -1,10 +1,11 @@
 """
 Risk management for the Macro Trader bot.
 
-Enforces three guards before any order is submitted:
-  1. MAX_TRADES_PER_DAY  — hard cap on daily executions
-  2. MAX_DAILY_LOSS_PCT  — pause if portfolio drops too much intraday
-  3. Position sizing     — size each order at MAX_POSITION_PCT of equity
+Enforces four guards before any order is submitted:
+  1. MAX_TRADES_PER_DAY       — hard cap on daily executions
+  2. MAX_DAILY_LOSS_PCT       — pause if portfolio drops too much intraday
+  3. Position sizing          — size each order at MAX_POSITION_PCT of equity
+  4. Per-ticker accumulation  — block additional BUY if already holding a long position
 
 The start-of-session equity baseline is persisted in the DB so a mid-day
 restart does not reset the daily loss guard to the post-crash equity level.

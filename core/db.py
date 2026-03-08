@@ -122,9 +122,10 @@ class Database:
     def _migrate_schema(self) -> None:
         """Add columns introduced after the initial schema. Safe to run on existing DBs."""
         migrations = [
-            ("signals", "fill_price", "REAL"),
-            ("signals", "exit_price", "REAL"),
-            ("signals", "source",     "TEXT"),   # article source for multi-source corroboration
+            ("signals", "fill_price",   "REAL"),
+            ("signals", "exit_price",   "REAL"),
+            ("signals", "source",       "TEXT"),   # article source for multi-source corroboration
+            ("signals", "skip_reason",  "TEXT"),   # why the signal was skipped
         ]
         for table, col, coltype in migrations:
             try:
@@ -246,10 +247,10 @@ class Database:
         sql = """
             INSERT INTO signals
                 (article_id, ticker, action, confidence, theme, rationale,
-                 status, created_at, executed_at, source)
+                 status, created_at, executed_at, source, skip_reason)
             VALUES
                 (:article_id, :ticker, :action, :confidence, :theme, :rationale,
-                 :status, :created_at, :executed_at, :source)
+                 :status, :created_at, :executed_at, :source, :skip_reason)
         """
         params = {
             "article_id": signal.get("article_id"),
@@ -262,6 +263,7 @@ class Database:
             "created_at": signal.get("created_at", _now_utc()),
             "executed_at": signal.get("executed_at"),
             "source": signal.get("source", ""),
+            "skip_reason": signal.get("skip_reason"),
         }
         try:
             with self._write_lock, self._conn:
@@ -331,15 +333,17 @@ class Database:
         status: str,
         executed_at: str | None = None,
         fill_price: float | None = None,
+        skip_reason: str | None = None,
     ) -> bool:
         """
-        Update a signal's status, and optionally its fill price.
+        Update a signal's status, and optionally its fill price or skip reason.
 
         Args:
             signal_id:   The signal's primary key.
             status:      One of pending | executed | skipped | expired.
             executed_at: UTC ISO-8601 timestamp (required when status='executed').
             fill_price:  Approximate fill price at time of execution.
+            skip_reason: Human-readable reason why the signal was skipped.
 
         Returns:
             True if exactly one row was updated, False otherwise.
@@ -353,8 +357,9 @@ class Database:
         try:
             with self._write_lock, self._conn:
                 cursor = self._conn.execute(
-                    "UPDATE signals SET status = ?, executed_at = ?, fill_price = ? WHERE id = ?",
-                    (status, executed_at, fill_price, signal_id),
+                    "UPDATE signals SET status = ?, executed_at = ?, fill_price = ?, "
+                    "skip_reason = ? WHERE id = ?",
+                    (status, executed_at, fill_price, skip_reason, signal_id),
                 )
                 updated = cursor.rowcount == 1
                 if not updated:

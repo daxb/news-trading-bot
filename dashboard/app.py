@@ -405,15 +405,16 @@ def render_signals_tab() -> None:
         rows = []
         for s in signals:
             rows.append({
-                "":           _STATUS_ICON.get(s["status"], ""),
-                "Action":     f"{_ACTION_ICON.get(s['action'], '')} {s['action'].upper()}",
-                "Ticker":     s["ticker"],
-                "Theme":      s["theme"],
-                "Confidence": f"{s['confidence']:.2f}",
-                "Status":     s["status"],
-                "Created":    s["created_at"][:19] if s["created_at"] else "",
-                "Executed":   s["executed_at"][:19] if s["executed_at"] else "—",
-                "Rationale":  s["rationale"],
+                "":             _STATUS_ICON.get(s["status"], ""),
+                "Action":       f"{_ACTION_ICON.get(s['action'], '')} {s['action'].upper()}",
+                "Ticker":       s["ticker"],
+                "Theme":        s["theme"],
+                "Confidence":   f"{s['confidence']:.2f}",
+                "Status":       s["status"],
+                "Skip Reason":  s.get("skip_reason") or "",
+                "Created":      s["created_at"][:19] if s["created_at"] else "",
+                "Executed":     s["executed_at"][:19] if s["executed_at"] else "—",
+                "Rationale":    s["rationale"],
             })
         st.dataframe(rows, width='stretch', hide_index=True)
 
@@ -509,6 +510,11 @@ with tab_audit:
         st.subheader("Signal Quality by Theme")
         theme_rows = []
         for theme, data in sorted(themes.items(), key=lambda x: -x[1]["total"]):
+            skip_r = data.get("skip_reasons", {})
+            skip_r_str = ", ".join(
+                f"{k}:{v}"
+                for k, v in sorted(skip_r.items(), key=lambda x: -x[1])
+            ) if skip_r else "—"
             theme_rows.append({
                 "Theme":        theme,
                 "Total":        data["total"],
@@ -516,6 +522,7 @@ with tab_audit:
                 "Skipped":      data["skipped"],
                 "Skip Rate":    f"{data['skip_rate']:.0%}",
                 "Avg Conf":     f"{data['avg_confidence']:.3f}",
+                "Skip Reasons": skip_r_str,
             })
         st.dataframe(theme_rows, width="stretch", hide_index=True)
 

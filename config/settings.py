@@ -89,3 +89,18 @@ VIX_HIGH = float(os.getenv('VIX_HIGH', 25.0))                     # VIX elevated
 MIN_SOURCE_COUNT = int(os.getenv('MIN_SOURCE_COUNT', 1))
 # How far back (hours) to look for corroborating signals from other sources.
 CORROBORATION_WINDOW_HOURS = int(os.getenv('CORROBORATION_WINDOW_HOURS', 4))
+
+# Per-theme conviction threshold overrides.
+# Format: THEME_THRESHOLDS=oil_geopolitical=0.35,market_rally=0.45
+# Themes not listed fall back to SIGNAL_CONVICTION_THRESHOLD.
+_raw_theme_thresholds = os.getenv('THEME_THRESHOLDS', '')
+THEME_CONVICTION_THRESHOLDS: dict[str, float] = {}
+if _raw_theme_thresholds:
+    for _pair in _raw_theme_thresholds.split(','):
+        _pair = _pair.strip()
+        if '=' in _pair:
+            _k, _v = _pair.split('=', 1)
+            try:
+                THEME_CONVICTION_THRESHOLDS[_k.strip()] = float(_v.strip())
+            except ValueError:
+                pass

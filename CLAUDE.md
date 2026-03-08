@@ -187,6 +187,48 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - Multi-source confirmation: `MIN_SOURCE_COUNT` defaults to 1 for paper trading; **set to 2 via env var for production** to require independent corroboration before executing
 - Staggered dashboard cache TTLs are configured in `dashboard/app.py` (45s signals, 60s broker, 90s forex, 120s FRED)
 
+## Full Bot Reset (Fresh Paper Trading)
+
+Use this when you want to wipe all history and start clean — e.g. after a major strategy change or to reset performance tracking.
+
+### Step 1 — Create a new Alpaca paper account
+
+Alpaca no longer supports in-place balance resets. You must create a new paper account:
+
+1. Log in at https://app.alpaca.markets
+2. Switch to Paper Trading, then create a new paper account
+3. Copy the new **API Key** and **Secret Key** from the new account
+
+### Step 2 — Update Fly.io secrets with the new Alpaca keys
+
+```bash
+flyctl secrets set ALPACA_API_KEY=<new-key> ALPACA_SECRET_KEY=<new-secret> -a trading-bot-lingering-lake-4314
+```
+
+This triggers an automatic redeploy. Wait for the app to come back up before continuing.
+
+### Step 3 — Wipe the SQLite database and close any open broker positions
+
+```bash
+flyctl ssh console -a trading-bot-lingering-lake-4314 --command "python /app/scripts/reset_bot.py --yes"
+```
+
+This will:
+- Cancel all open Alpaca orders
+- Close all open Alpaca positions
+- Close all open OANDA positions (if configured)
+- Clear the SQLite DB (articles, signals, bot_state tables reset to empty)
+
+### Step 4 — Verify
+
+```bash
+flyctl logs -a trading-bot-lingering-lake-4314
+```
+
+Look for the scheduler starting up and news polling beginning without errors. The dashboard at `https://trading-bot-lingering-lake-4314.fly.dev` should show empty tables — that confirms a clean slate. No bot restart is needed; the scheduler picks up fresh data on its next poll cycle (within 5 minutes).
+
+---
+
 ## Log Review Process
 
 ### How to Access Fly.io Logs

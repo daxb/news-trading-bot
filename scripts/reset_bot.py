@@ -8,9 +8,12 @@ What this script does automatically (via API):
   3. Close all open OANDA positions (if configured)
   4. Clear the local SQLite database (articles, signals, bot_state)
 
-What requires manual action on each broker's web dashboard:
-  • Alpaca paper balance reset → https://app.alpaca.markets/paper-trading/overview
-      Account → "Reset Paper Account" (restores to $100,000)
+What requires manual action before running this script:
+  • Alpaca paper account → Alpaca no longer supports in-place resets.
+      Create a new paper account at https://app.alpaca.markets, then update
+      Fly.io secrets with the new keys:
+        flyctl secrets set ALPACA_API_KEY=<key> ALPACA_SECRET_KEY=<secret> -a trading-bot-lingering-lake-4314
+      Wait for the app to redeploy before running this script.
   • OANDA practice balance reset → https://www.oanda.com/demo-account/
       My Account → Manage Funds → Reset Account
 
@@ -163,9 +166,10 @@ def _print_manual_steps() -> None:
     print("complete the following steps manually:\n")
 
     if has_alpaca:
-        print("  Alpaca paper balance reset")
-        print("    1. Go to https://app.alpaca.markets/paper-trading/overview")
-        print("    2. Click 'Reset Paper Account' (restores the $100,000 balance)")
+        print("  Alpaca paper account reset (Alpaca no longer supports in-place resets)")
+        print("    1. Create a new paper account at https://app.alpaca.markets")
+        print("    2. Copy the new API Key and Secret Key")
+        print("    3. Run: flyctl secrets set ALPACA_API_KEY=<key> ALPACA_SECRET_KEY=<secret> -a trading-bot-lingering-lake-4314")
         print()
 
     if has_oanda:

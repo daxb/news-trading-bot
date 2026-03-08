@@ -106,24 +106,32 @@ class MacroClient:
                 ex.submit(_fetch_one, sid, lbl): sid
                 for sid, lbl in KEY_INDICATORS.items()
             }
-            for future in as_completed(futures, timeout=30):
-                sid = futures[future]
-                try:
-                    series_id, label, observations = future.result()
-                except Exception:
-                    logger.warning("Indicator %s timed out or failed", sid)
-                    continue
-                if observations:
-                    latest = observations[-1]
-                    indicators[series_id] = {
-                        "label": label,
-                        "date": latest["date"],
-                        "value": latest["value"],
-                    }
-                else:
-                    logger.warning(
-                        "Could not fetch indicator %s (%s)", series_id, label
-                    )
+            try:
+                completed = as_completed(futures, timeout=60)
+                for future in completed:
+                    sid = futures[future]
+                    try:
+                        series_id, label, observations = future.result()
+                    except Exception:
+                        logger.warning("Indicator %s failed", sid)
+                        continue
+                    if observations:
+                        latest = observations[-1]
+                        indicators[series_id] = {
+                            "label": label,
+                            "date": latest["date"],
+                            "value": latest["value"],
+                        }
+                    else:
+                        logger.warning(
+                            "Could not fetch indicator %s (%s)", series_id, label
+                        )
+            except TimeoutError:
+                pending = [sid for f, sid in futures.items() if not f.done()]
+                logger.warning(
+                    "FRED fetch timed out; %d indicator(s) skipped: %s",
+                    len(pending), pending,
+                )
 
         logger.info(
             "Fetched %d / %d key indicators",

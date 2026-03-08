@@ -106,7 +106,7 @@ def test_hawkish_negative_generates_sell(gen):
 def test_geopolitical_negative_generates_sell(gen):
     """Geopolitical conflict + negative sentiment → SELL SPY."""
     article = _article(
-        "Military conflict escalates, global markets in turmoil",
+        "Armed conflict sees major escalation, global markets in turmoil",
         sentiment_label="negative",
         sentiment_score=0.85,
     )
@@ -228,3 +228,70 @@ def test_generate_signals_filters_nones(gen):
     actions = {s["action"] for s in signals}
     assert "buy" in actions
     assert "sell" in actions
+
+
+# ---------------------------------------------------------------------------
+# Forex / commodity rules
+# ---------------------------------------------------------------------------
+
+def test_usd_strength_positive_generates_sell_eurusd(gen):
+    """USD strength + positive sentiment → SELL EUR_USD."""
+    article = _article(
+        "Dollar strengthens as investors seek USD safe haven",
+        sentiment_label="positive", sentiment_score=0.85,
+    )
+    signal = gen.generate_signal(article)
+    assert signal is not None
+    assert signal["ticker"] == "EUR_USD"
+    assert signal["action"] == "sell"
+    assert signal["theme"] == "usd_strength"
+
+
+def test_gold_safe_haven_positive_generates_buy_xauusd(gen):
+    """Gold safe haven + positive sentiment → BUY XAU_USD."""
+    article = _article(
+        "Gold rises on flight to gold as uncertainty grows",
+        sentiment_label="positive", sentiment_score=0.85,
+    )
+    signal = gen.generate_signal(article)
+    assert signal is not None
+    assert signal["ticker"] == "XAU_USD"
+    assert signal["action"] == "buy"
+
+
+def test_oil_supply_squeeze_positive_generates_buy_bcousd(gen):
+    """Oil supply squeeze + positive sentiment → BUY BCO_USD."""
+    article = _article(
+        "Oil prices surge as tight supply continues",
+        sentiment_label="positive", sentiment_score=0.85,
+    )
+    signal = gen.generate_signal(article)
+    assert signal is not None
+    assert signal["ticker"] == "BCO_USD"
+    assert signal["action"] == "buy"
+
+
+def test_oil_geopolitical_negative_generates_buy_bcousd(gen):
+    """Oil geopolitical + negative sentiment → BUY BCO_USD (both sentiments map to buy)."""
+    article = _article(
+        "Pipeline attack disrupts oil field attack production capacity",
+        sentiment_label="negative", sentiment_score=0.85,
+    )
+    signal = gen.generate_signal(article)
+    assert signal is not None
+    assert signal["ticker"] == "BCO_USD"
+    assert signal["action"] == "buy"
+
+
+# ---------------------------------------------------------------------------
+# is_relevant
+# ---------------------------------------------------------------------------
+
+def test_is_relevant_true_for_matching_article(gen):
+    article = _article("Fed signals rate hike ahead of next meeting")
+    assert gen.is_relevant(article) is True
+
+
+def test_is_relevant_false_for_irrelevant_article(gen):
+    article = _article("Celebrity gala draws thousands to red carpet event")
+    assert gen.is_relevant(article) is False

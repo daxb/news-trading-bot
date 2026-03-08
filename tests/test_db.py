@@ -192,3 +192,103 @@ def test_update_signal_status_missing_id(db):
     """update_signal_status() must return False for a non-existent signal id."""
     result = db.update_signal_status(9999, "skipped")
     assert result is False, "Missing signal id must return False"
+
+
+# ---------------------------------------------------------------------------
+# Time-window and state tests
+# ---------------------------------------------------------------------------
+
+def test_get_recent_headlines(db):
+    """get_recent_headlines() must return headlines within the time window."""
+    db.save_article(_make_article(article_id=1))
+    db.save_article(_make_article(article_id=2))
+    headlines = db.get_recent_headlines(hours=4)
+    assert len(headlines) == 2
+    assert all(isinstance(h, str) for h in headlines)
+
+
+def test_get_recent_headlines_excludes_empty(db):
+    """Articles with empty headlines are excluded by the query."""
+    article = _make_article(article_id=10)
+    article["headline"] = ""
+    db.save_article(article)
+    db.save_article(_make_article(article_id=11))
+    headlines = db.get_recent_headlines(hours=4)
+    assert len(headlines) == 1
+
+
+def test_get_articles_since(db):
+    """get_articles_since() must return articles within the time window."""
+    db.save_article(_make_article(article_id=1))
+    articles = db.get_articles_since(hours=24)
+    assert len(articles) == 1
+
+
+def test_get_signals_since(db):
+    """get_signals_since() must return signals within the time window."""
+    db.save_article(_make_article())
+    db.save_signal(_make_signal())
+    signals = db.get_signals_since(hours=1)
+    assert len(signals) == 1
+
+
+def test_count_executed_today(db):
+    """count_executed_today() must count only today's executed signals."""
+    from datetime import datetime, timezone
+    db.save_article(_make_article(article_id=1))
+    db.save_article(_make_article(article_id=2))
+
+    # Execute one today
+    sid1 = db.save_signal(_make_signal(article_id=1))
+    db.update_signal_status(sid1, "executed", executed_at=datetime.now(timezone.utc).isoformat())
+
+    # Leave another as pending
+    db.save_signal(_make_signal(article_id=2))
+
+    assert db.count_executed_today() == 1
+
+
+def test_count_signal_sources_since(db):
+    """count_signal_sources_since() must count distinct sources."""
+    db.save_article(_make_article(article_id=1))
+    db.save_article(_make_article(article_id=2))
+    db.save_signal({**_make_signal(article_id=1), "source": "Reuters", "theme": "fed_hawkish"})
+    db.save_signal({**_make_signal(article_id=2), "source": "AP", "theme": "fed_hawkish"})
+    count = db.count_signal_sources_since("fed_hawkish", "SPY", "buy", hours=1)
+    assert count == 2
+
+
+def test_get_set_state(db):
+    """set_state() + get_state() must round-trip a string value."""
+    db.set_state("test_key", "test_value")
+    assert db.get_state("test_key") == "test_value"
+
+
+def test_set_state_upsert(db):
+    """set_state() with the same key twice must overwrite."""
+    db.set_state("key", "first")
+    db.set_state("key", "second")
+    assert db.get_state("key") == "second"
+
+
+def test_update_signal_exit_price(db):
+    """update_signal_exit_price() must persist the exit price."""
+    db.save_article(_make_article())
+    sid = db.save_signal(_make_signal())
+    db.update_signal_exit_price(sid, 450.0)
+    signals = db.get_signals(limit=1)
+    assert signals[0]["exit_price"] == 450.0
+
+
+def test_get_last_executed_signal(db):
+    """get_last_executed_signal() must return the most recent executed signal."""
+    db.save_article(_make_article(article_id=1))
+    db.save_article(_make_article(article_id=2))
+    sid1 = db.save_signal(_make_signal(article_id=1))
+    sid2 = db.save_signal(_make_signal(article_id=2))
+    db.update_signal_status(sid1, "executed", executed_at="2026-03-04T12:00:00+00:00")
+    db.update_signal_status(sid2, "executed", executed_at="2026-03-04T13:00:00+00:00")
+
+    result = db.get_last_executed_signal("SPY")
+    assert result is not None
+    assert result["id"] == sid2

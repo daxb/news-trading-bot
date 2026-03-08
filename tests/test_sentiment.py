@@ -90,6 +90,28 @@ def test_empty_string_returns_safe_default(analyzer):
 
 
 @pytest.mark.slow
+def test_score_articles_batch(analyzer):
+    """score_articles() must return same-length list with sentiment keys."""
+    articles = [
+        {"id": 1, "headline": "Markets rally", "summary": "", "source": "x",
+         "url": "", "category": "", "datetime": None, "related": ""},
+        {"id": 2, "headline": "Oil prices crash", "summary": "", "source": "x",
+         "url": "", "category": "", "datetime": None, "related": ""},
+    ]
+    result = analyzer.score_articles(articles)
+    assert len(result) == 2
+    for a in result:
+        assert "sentiment_label" in a
+        assert "sentiment_score" in a
+
+
+@pytest.mark.slow
+def test_score_articles_empty_input(analyzer):
+    """score_articles([]) must return []."""
+    assert analyzer.score_articles([]) == []
+
+
+@pytest.mark.slow
 def test_score_article_preserves_keys(analyzer):
     """
     score_article() must return a new dict that contains all original

@@ -161,7 +161,7 @@ with st.sidebar:
 
     col_r1, col_r2 = st.columns(2)
     with col_r1:
-        if st.button("🔄 Refresh", use_container_width=True):
+        if st.button("🔄 Refresh", use_container_width=True, help="Refresh trading data (keeps macro/FRED cache)"):
             fetch_account.clear()
             fetch_forex_account.clear()
             fetch_positions.clear()
@@ -172,7 +172,7 @@ with st.sidebar:
             fetch_articles.clear()
             st.rerun()
     with col_r2:
-        if st.button("🔄 All", use_container_width=True, help="Refresh everything including macro data"):
+        if st.button("🔄 Refresh + Macro", use_container_width=True, help="Refresh everything including macro/FRED data (slower)"):
             st.cache_data.clear()
             st.rerun()
 

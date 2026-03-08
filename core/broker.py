@@ -125,7 +125,7 @@ class BrokerClient:
                 "submitted_at": str(order.submitted_at),
             }
             logger.info(
-                "Order submitted: %s %s %s -> %s",
+                "[ORDER] submitted: %s %s %s -> %s",
                 side.upper(), qty, ticker.upper(), result["status"],
             )
             return result
@@ -163,7 +163,7 @@ class BrokerClient:
         """Close the entire open position for a ticker."""
         try:
             order = self._client.close_position(ticker.upper())
-            logger.info("Closed position: %s", ticker.upper())
+            logger.info("[ORDER] closed position: %s", ticker.upper())
             return {"id": str(order.id), "status": str(order.status)}
         except Exception:
             logger.exception("Failed to close position for %s", ticker.upper())

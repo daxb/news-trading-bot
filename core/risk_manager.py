@@ -90,7 +90,7 @@ class RiskManager:
                 f"Daily trade limit reached "
                 f"({trades_today}/{settings.MAX_TRADES_PER_DAY})"
             )
-            logger.warning(reason)
+            logger.warning("[RISK] %s", reason)
             return False, reason
 
         # 2. Daily loss
@@ -103,7 +103,7 @@ class RiskManager:
                     f"Daily loss limit breached "
                     f"({loss_pct:.1%} >= {settings.MAX_DAILY_LOSS_PCT:.1%})"
                 )
-                logger.warning(reason)
+                logger.warning("[RISK] %s", reason)
                 return False, reason
 
         # 3. Per-ticker accumulation guard — block additional BUYs if already long

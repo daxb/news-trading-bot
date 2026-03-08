@@ -6,6 +6,7 @@ pipeline is decoupled from pandas internals.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
 from fredapi import Fred
@@ -94,19 +95,27 @@ class MacroClient:
         """
         indicators: dict = {}
 
-        for series_id, label in KEY_INDICATORS.items():
-            observations = self.get_series(series_id, limit=1)
-            if observations:
-                latest = observations[-1]
-                indicators[series_id] = {
-                    "label": label,
-                    "date": latest["date"],
-                    "value": latest["value"],
-                }
-            else:
-                logger.warning(
-                    "Could not fetch indicator %s (%s)", series_id, label
-                )
+        def _fetch_one(series_id: str, label: str) -> tuple:
+            return series_id, label, self.get_series(series_id, limit=1)
+
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            futures = {
+                ex.submit(_fetch_one, sid, lbl): sid
+                for sid, lbl in KEY_INDICATORS.items()
+            }
+            for future in as_completed(futures):
+                series_id, label, observations = future.result()
+                if observations:
+                    latest = observations[-1]
+                    indicators[series_id] = {
+                        "label": label,
+                        "date": latest["date"],
+                        "value": latest["value"],
+                    }
+                else:
+                    logger.warning(
+                        "Could not fetch indicator %s (%s)", series_id, label
+                    )
 
         logger.info(
             "Fetched %d / %d key indicators",

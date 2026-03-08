@@ -62,37 +62,49 @@ def get_forex() -> ForexBroker | None:
 
 
 # ---------------------------------------------------------------------------
+# Warm all API clients in parallel on cold start
+# ---------------------------------------------------------------------------
+
+def _warm_clients() -> None:
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        ex.submit(get_broker)
+        ex.submit(get_macro)
+        ex.submit(get_forex)
+
+_warm_clients()
+
+# ---------------------------------------------------------------------------
 # Data fetchers (cached with TTL so a manual refresh busts the cache)
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def fetch_account() -> dict:
     return get_broker().get_account()
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def fetch_forex_account() -> dict:
     client = get_forex()
     return client.get_account() if client else {}
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=45)
 def fetch_positions() -> list[dict]:
     return get_broker().get_positions()
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=45)
 def fetch_forex_positions() -> list[dict]:
     client = get_forex()
     return client.get_positions() if client else []
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=90)
 def fetch_open_orders() -> list[dict]:
     return get_broker().get_orders(status="open")
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=120)
 def fetch_closed_orders(limit: int) -> list[dict]:
     alpaca = get_broker().get_orders(status="closed")
     forex_client = get_forex()
@@ -105,12 +117,12 @@ def fetch_closed_orders(limit: int) -> list[dict]:
     return combined[:limit]
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def fetch_signals(limit: int, status: str | None) -> list[dict]:
     return get_db().get_signals(limit=limit, status=status or None)
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def fetch_articles(limit: int, sentiment: str | None) -> list[dict]:
     return get_db().get_articles(limit=limit, sentiment_label=sentiment or None)
 
@@ -147,9 +159,22 @@ with st.sidebar:
     st.title("📈 FIONA")
     st.caption(f"Updated: {_utc_now()}")
 
-    if st.button("🔄 Refresh", width='stretch'):
-        st.cache_data.clear()
-        st.rerun()
+    col_r1, col_r2 = st.columns(2)
+    with col_r1:
+        if st.button("🔄 Refresh", use_container_width=True):
+            fetch_account.clear()
+            fetch_forex_account.clear()
+            fetch_positions.clear()
+            fetch_forex_positions.clear()
+            fetch_open_orders.clear()
+            fetch_closed_orders.clear()
+            fetch_signals.clear()
+            fetch_articles.clear()
+            st.rerun()
+    with col_r2:
+        if st.button("🔄 All", use_container_width=True, help="Refresh everything including macro data"):
+            st.cache_data.clear()
+            st.rerun()
 
     st.divider()
 

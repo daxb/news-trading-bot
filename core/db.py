@@ -121,6 +121,16 @@ class Database:
             self._conn.execute(_CREATE_ARTICLES)
             self._conn.execute(_CREATE_SIGNALS)
             self._conn.execute(_CREATE_BOT_STATE)
+            # Indexes for time-range queries used by dashboard and auditor
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals (created_at)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_articles_fetched_at ON articles (fetched_at)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_signals_status ON signals (status)"
+            )
         self._migrate_schema()
 
     def _migrate_schema(self) -> None:

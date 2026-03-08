@@ -43,11 +43,13 @@ _FEEDS: list[dict] = [
     },
     {
         "name": "AP Top News",
-        "url": "https://feeds.apnews.com/apnews/topnews",
+        "url": "https://feeds.apnews.com/rss/apf-topnews",
+        "fallback_url": "https://feeds.apnews.com/apnews/topnews",
     },
     {
         "name": "AP Business",
-        "url": "https://feeds.apnews.com/apnews/business",
+        "url": "https://feeds.apnews.com/rss/apf-business",
+        "fallback_url": "https://feeds.apnews.com/apnews/business",
     },
 ]
 
@@ -95,8 +97,15 @@ class RSSClient:
         url  = feed["url"]
         parsed = feedparser.parse(url)
         if parsed.bozo and not parsed.entries:
-            logger.warning("RSS feed '%s' parse error — skipping", name)
-            return []
+            fallback = feed.get("fallback_url")
+            if fallback:
+                logger.warning(
+                    "RSS feed '%s' parse error on primary URL — trying fallback", name
+                )
+                parsed = feedparser.parse(fallback)
+            if parsed.bozo and not parsed.entries:
+                logger.warning("RSS feed '%s' parse error — skipping", name)
+                return []
         articles = [
             _normalize_entry(e, name)
             for e in parsed.entries

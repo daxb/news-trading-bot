@@ -216,7 +216,9 @@ class BotScheduler:
                     logger.info(
                         "Signal skipped — OANDA not configured for %s", sig["ticker"]
                     )
-                    self._db.update_signal_status(rowid, "skipped")
+                    self._db.update_signal_status(
+                        rowid, "skipped", skip_reason="oanda_not_configured"
+                    )
                     continue
                 risk   = self._forex_risk
                 broker = self._forex
@@ -224,16 +226,18 @@ class BotScheduler:
                 risk   = self._risk
                 broker = self._broker
 
-            approved, reason = risk.can_trade()
+            approved, reason = risk.can_trade(ticker=sig["ticker"], action=sig["action"])
             if not approved:
                 logger.info("Signal skipped — risk check: %s", reason)
-                self._db.update_signal_status(rowid, "skipped")
+                self._db.update_signal_status(rowid, "skipped", skip_reason=reason)
                 continue
 
             qty = risk.position_qty(sig["ticker"])
             if qty <= 0:
                 logger.info("Signal skipped — could not size position for %s", sig["ticker"])
-                self._db.update_signal_status(rowid, "skipped")
+                self._db.update_signal_status(
+                    rowid, "skipped", skip_reason="position_sizing_failed"
+                )
                 continue
 
             # Equity only: don't short-sell if we have no position
@@ -244,7 +248,9 @@ class BotScheduler:
                     logger.info(
                         "Signal skipped — no position to sell for %s", sig["ticker"]
                     )
-                    self._db.update_signal_status(rowid, "skipped")
+                    self._db.update_signal_status(
+                        rowid, "skipped", skip_reason="no_position_to_sell"
+                    )
                     continue
 
             order = broker.submit_market_order(sig["ticker"], qty, sig["action"])
@@ -261,7 +267,9 @@ class BotScheduler:
                 executed_signals += 1
                 send_signal_alert({**sig, "qty": qty, "order_id": order.get("id")})
             else:
-                self._db.update_signal_status(rowid, "skipped")
+                self._db.update_signal_status(
+                    rowid, "skipped", skip_reason="order_submission_failed"
+                )
 
         logger.info(
             "Poll complete: saved %d articles, %d signals, %d executed",

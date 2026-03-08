@@ -101,11 +101,12 @@ _RULES: list[dict] = [
     {
         "theme": "geopolitical_risk",
         "keywords": [
-            "war", "conflict", "sanctions", "military strike",
-            "invasion", "geopolitical", "escalation", "attack",
+            "sanctions", "military strike", "invasion", "geopolitical",
+            "escalation", "armed conflict", "declares war", "act of war",
+            "airstrikes", "bombing campaign", "ground offensive", "military attack",
         ],
         "actions": {"positive": None, "negative": "sell", "neutral": None},
-        "confidence_mult": 0.75,
+        "confidence_mult": 0.85,
         "ticker": "SPY",
         "description": "Geopolitical shocks trigger risk-off selling",
     },
@@ -271,6 +272,11 @@ class SignalGenerator:
             "SignalGenerator ready (conviction_threshold=%.2f, rules=%d)",
             self._threshold, len(_RULES),
         )
+        if settings.THEME_CONVICTION_THRESHOLDS:
+            logger.info(
+                "Per-theme conviction overrides active: %s",
+                settings.THEME_CONVICTION_THRESHOLDS,
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -329,10 +335,13 @@ class SignalGenerator:
                 continue
 
             confidence = round(sentiment_score * rule["confidence_mult"], 4)
-            if confidence < self._threshold:
+            theme_threshold = settings.THEME_CONVICTION_THRESHOLDS.get(
+                rule["theme"], self._threshold
+            )
+            if confidence < theme_threshold:
                 logger.debug(
                     "Rule '%s' fired but confidence %.4f < threshold %.4f — skipping",
-                    rule["theme"], confidence, self._threshold,
+                    rule["theme"], confidence, theme_threshold,
                 )
                 return None
 

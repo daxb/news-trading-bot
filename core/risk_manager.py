@@ -1,10 +1,11 @@
 """
 Risk management for the Macro Trader bot.
 
-Enforces three guards before any order is submitted:
-  1. MAX_TRADES_PER_DAY  — hard cap on daily executions
-  2. MAX_DAILY_LOSS_PCT  — pause if portfolio drops too much intraday
-  3. Position sizing     — size each order at MAX_POSITION_PCT of equity
+Enforces four guards before any order is submitted:
+  1. MAX_TRADES_PER_DAY       — hard cap on daily executions
+  2. MAX_DAILY_LOSS_PCT       — pause if portfolio drops too much intraday
+  3. Position sizing          — size each order at MAX_POSITION_PCT of equity
+  4. Per-ticker accumulation  — block additional BUY if already holding a long position
 
 The start-of-session equity baseline is persisted in the DB so a mid-day
 restart does not reset the daily loss guard to the post-crash equity level.
@@ -69,10 +70,18 @@ class RiskManager:
     # Guards
     # ------------------------------------------------------------------
 
-    def can_trade(self) -> tuple[bool, str]:
+    def can_trade(
+        self,
+        ticker: str | None = None,
+        action: str | None = None,
+    ) -> tuple[bool, str]:
         """
         Return (True, '') if it is safe to submit an order.
         Return (False, reason) if a risk limit is breached.
+
+        Args:
+            ticker: Instrument to trade (optional — enables per-ticker guard).
+            action: 'buy' or 'sell' (optional — required for per-ticker guard).
         """
         # 1. Daily trade count
         trades_today = self._db.count_executed_today()
@@ -93,6 +102,17 @@ class RiskManager:
                 reason = (
                     f"Daily loss limit breached "
                     f"({loss_pct:.1%} >= {settings.MAX_DAILY_LOSS_PCT:.1%})"
+                )
+                logger.warning(reason)
+                return False, reason
+
+        # 3. Per-ticker accumulation guard — block additional BUYs if already long
+        if ticker and action and action.lower() == "buy":
+            position = self._broker.get_position(ticker)
+            if position:
+                reason = (
+                    f"Already hold a position in {ticker} "
+                    f"— skipping additional BUY to prevent accumulation"
                 )
                 logger.warning(reason)
                 return False, reason

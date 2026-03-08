@@ -29,6 +29,7 @@ Return shape
             "expired": int,
             "skip_rate": float,
             "avg_confidence": float,
+            "skip_reasons": {"<reason>": int, ...},  # counts per skip reason
         },
         ...
     },
@@ -145,6 +146,7 @@ def compute_metrics(db: Database, hours: int = 24) -> dict:
                     "skipped": 0,
                     "expired": 0,
                     "_conf_sum": 0.0,
+                    "skip_reasons": {},
                 }
             themes[theme]["total"] += 1
             themes[theme]["_conf_sum"] += float(sig.get("confidence") or 0.0)
@@ -152,6 +154,10 @@ def compute_metrics(db: Database, hours: int = 24) -> dict:
                 themes[theme]["executed"] += 1
             elif sig["status"] == "skipped":
                 themes[theme]["skipped"] += 1
+                reason = sig.get("skip_reason") or "unknown"
+                themes[theme]["skip_reasons"][reason] = (
+                    themes[theme]["skip_reasons"].get(reason, 0) + 1
+                )
             elif sig["status"] == "expired":
                 themes[theme]["expired"] += 1
 

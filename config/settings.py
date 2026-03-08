@@ -8,9 +8,12 @@ Override any setting by adding it to .env or setting it in your deployment
 environment (e.g. `fly secrets set VAR=value` for Fly.io).
 """
 
+import logging
 import os
 import sys
 from dotenv import load_dotenv
+
+_logger = logging.getLogger(__name__)
 
 # Load .env from project root
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
@@ -113,4 +116,55 @@ if _raw_theme_thresholds:
             try:
                 THEME_CONVICTION_THRESHOLDS[_k.strip()] = float(_v.strip())
             except ValueError:
-                pass
+                _logger.warning(
+                    "Ignoring malformed THEME_THRESHOLDS pair: '%s' "
+                    "(expected format: theme_name=0.5)", _pair,
+                )
+
+
+# ---------------------------------------------------------------------------
+# Validation — catch misconfiguration at startup, not mid-trade
+# ---------------------------------------------------------------------------
+def _validate_settings() -> None:
+    """Validate that all settings are within safe ranges. Raises ValueError on violations."""
+    errors: list[str] = []
+
+    if not (0.0 <= SIGNAL_CONVICTION_THRESHOLD <= 1.0):
+        errors.append(
+            f"SIGNAL_CONVICTION_THRESHOLD must be in [0.0, 1.0], got {SIGNAL_CONVICTION_THRESHOLD}"
+        )
+    if not (0.0 < MAX_POSITION_PCT <= 1.0):
+        errors.append(
+            f"MAX_POSITION_PCT must be in (0.0, 1.0], got {MAX_POSITION_PCT}"
+        )
+    if not (0.0 < MAX_DAILY_LOSS_PCT <= 1.0):
+        errors.append(
+            f"MAX_DAILY_LOSS_PCT must be in (0.0, 1.0], got {MAX_DAILY_LOSS_PCT}"
+        )
+    if not (0.0 < STOP_LOSS_PCT <= 1.0):
+        errors.append(
+            f"STOP_LOSS_PCT must be in (0.0, 1.0], got {STOP_LOSS_PCT}"
+        )
+    if MAX_HOLD_HOURS <= 0:
+        errors.append(f"MAX_HOLD_HOURS must be > 0, got {MAX_HOLD_HOURS}")
+    if NEWS_POLL_INTERVAL_SECONDS < 30:
+        errors.append(
+            f"NEWS_POLL_INTERVAL_SECONDS must be >= 30, got {NEWS_POLL_INTERVAL_SECONDS}"
+        )
+    if MAX_TRADES_PER_DAY < 1:
+        errors.append(f"MAX_TRADES_PER_DAY must be >= 1, got {MAX_TRADES_PER_DAY}")
+    if not (0.0 < MAX_THEME_EXPOSURE_PCT <= 1.0):
+        errors.append(
+            f"MAX_THEME_EXPOSURE_PCT must be in (0.0, 1.0], got {MAX_THEME_EXPOSURE_PCT}"
+        )
+    if not (0.0 < MAX_TOTAL_EXPOSURE_PCT <= 1.0):
+        errors.append(
+            f"MAX_TOTAL_EXPOSURE_PCT must be in (0.0, 1.0], got {MAX_TOTAL_EXPOSURE_PCT}"
+        )
+
+    if errors:
+        msg = "Invalid configuration:\n  " + "\n  ".join(errors)
+        raise ValueError(msg)
+
+
+_validate_settings()

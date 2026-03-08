@@ -16,6 +16,29 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://api.telegram.org/bot{token}/sendMessage"
+_TELEGRAM_MAX_LENGTH = 4096
+
+
+def _send_telegram(text: str, context: str) -> None:
+    """Send a message to Telegram with truncation and error handling."""
+    if len(text) > _TELEGRAM_MAX_LENGTH:
+        text = text[:_TELEGRAM_MAX_LENGTH - 6] + "\n…"
+    try:
+        resp = requests.post(
+            _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
+            json={
+                "chat_id": settings.TELEGRAM_CHAT_ID,
+                "text": text,
+                "parse_mode": "Markdown",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        logger.info("Telegram %s sent", context)
+    except requests.RequestException as e:
+        logger.warning("Telegram request failed (%s): %s", context, e)
+    except Exception:
+        logger.exception("Failed to send Telegram %s", context)
 
 
 def send_signal_alert(signal: dict) -> None:
@@ -45,20 +68,7 @@ def send_signal_alert(signal: dict) -> None:
     if order_id:
         text += f"\nOrder: `{order_id}`"
 
-    try:
-        resp = requests.post(
-            _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
-            json={
-                "chat_id": settings.TELEGRAM_CHAT_ID,
-                "text": text,
-                "parse_mode": "Markdown",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        logger.info("Telegram alert sent: %s %s", action, ticker)
-    except Exception:
-        logger.exception("Failed to send Telegram alert")
+    _send_telegram(text, f"signal alert: {action} {ticker}")
 
 
 def send_hourly_update(
@@ -134,60 +144,21 @@ def send_hourly_update(
 
     text = header + "\n".join(sig_lines) + "\n".join(pnl_lines) + "\n".join(order_lines)
 
-    try:
-        resp = requests.post(
-            _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
-            json={
-                "chat_id": settings.TELEGRAM_CHAT_ID,
-                "text": text,
-                "parse_mode": "Markdown",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        logger.info("Telegram hourly update sent")
-    except Exception:
-        logger.exception("Failed to send Telegram hourly update")
+    _send_telegram(text, "hourly update")
 
 
 def send_startup_alert() -> None:
     """Notify Telegram that the bot has started."""
     if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
         return
-    try:
-        resp = requests.post(
-            _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
-            json={
-                "chat_id": settings.TELEGRAM_CHAT_ID,
-                "text": "🟢 *FIONA — started*",
-                "parse_mode": "Markdown",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        logger.info("Telegram startup alert sent")
-    except Exception:
-        logger.exception("Failed to send Telegram startup alert")
+    _send_telegram("🟢 *FIONA — started*", "startup alert")
 
 
 def send_shutdown_alert() -> None:
     """Notify Telegram that the bot is shutting down."""
     if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
         return
-    try:
-        resp = requests.post(
-            _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
-            json={
-                "chat_id": settings.TELEGRAM_CHAT_ID,
-                "text": "🔴 *FIONA — shutting down*",
-                "parse_mode": "Markdown",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        logger.info("Telegram shutdown alert sent")
-    except Exception:
-        logger.exception("Failed to send Telegram shutdown alert")
+    _send_telegram("🔴 *FIONA — shutting down*", "shutdown alert")
 
 
 def send_audit_report(metrics: dict) -> None:
@@ -253,20 +224,7 @@ def send_audit_report(metrics: dict) -> None:
 
     text = "\n".join(lines)
 
-    try:
-        resp = requests.post(
-            _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
-            json={
-                "chat_id": settings.TELEGRAM_CHAT_ID,
-                "text": text,
-                "parse_mode": "Markdown",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        logger.info("Telegram audit report sent")
-    except Exception:
-        logger.exception("Failed to send Telegram audit report")
+    _send_telegram(text, "audit report")
 
 
 def send_exit_alert(ticker: str, reason: str, order_id: str = "") -> None:
@@ -279,17 +237,4 @@ def send_exit_alert(ticker: str, reason: str, order_id: str = "") -> None:
     if order_id:
         text += f"\nOrder: `{order_id}`"
 
-    try:
-        resp = requests.post(
-            _BASE_URL.format(token=settings.TELEGRAM_BOT_TOKEN),
-            json={
-                "chat_id": settings.TELEGRAM_CHAT_ID,
-                "text": text,
-                "parse_mode": "Markdown",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        logger.info("Telegram exit alert sent: %s", ticker)
-    except Exception:
-        logger.exception("Failed to send Telegram exit alert")
+    _send_telegram(text, f"exit alert: {ticker}")

@@ -14,6 +14,7 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockLatestTradeRequest
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest, GetPortfolioHistoryRequest
+from alpaca.common.exceptions import APIError
 from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 
 from config import settings
@@ -69,6 +70,9 @@ class BrokerClient:
                 "currency": str(acct.currency),
                 "pattern_day_trader": bool(acct.pattern_day_trader),
             }
+        except APIError as e:
+            logger.warning("Alpaca API error fetching account: %s", e)
+            return {}
         except Exception:
             logger.exception("Failed to fetch account info")
             return {}
@@ -94,6 +98,9 @@ class BrokerClient:
                 }
                 for p in positions
             ]
+        except APIError as e:
+            logger.warning("Alpaca API error fetching positions: %s", e)
+            return []
         except Exception:
             logger.exception("Failed to fetch positions")
             return []
@@ -129,9 +136,12 @@ class BrokerClient:
                 side.upper(), qty, ticker.upper(), result["status"],
             )
             return result
-        except Exception:
+        except APIError as e:
+            logger.warning("[ORDER] Alpaca rejected %s %s %s: %s", side, qty, ticker, e)
+            return {"error": str(e)}
+        except Exception as e:
             logger.exception("Failed to submit order: %s %s %s", side, qty, ticker)
-            return {}
+            return {"error": str(e)}
 
     def get_position(self, ticker: str) -> dict | None:
         """Return the open position for a ticker, or None if not held."""
@@ -155,6 +165,9 @@ class BrokerClient:
             price = float(trades[ticker.upper()].price)
             logger.debug("Latest price %s: %.4f", ticker.upper(), price)
             return price
+        except APIError as e:
+            logger.warning("Alpaca API error getting price for %s: %s", ticker.upper(), e)
+            return None
         except Exception:
             logger.exception("Failed to get latest price for %s", ticker.upper())
             return None
@@ -165,6 +178,9 @@ class BrokerClient:
             order = self._client.close_position(ticker.upper())
             logger.info("[ORDER] closed position: %s", ticker.upper())
             return {"id": str(order.id), "status": str(order.status)}
+        except APIError as e:
+            logger.warning("Alpaca API error closing position %s: %s", ticker.upper(), e)
+            return {}
         except Exception:
             logger.exception("Failed to close position for %s", ticker.upper())
             return {}
@@ -217,6 +233,9 @@ class BrokerClient:
                 "profit_loss_pct": [round(v * 100, 4) for v in profit_loss_pct],
                 "base_value": float(h.base_value),
             }
+        except APIError as e:
+            logger.warning("Alpaca API error fetching portfolio history: %s", e)
+            return {}
         except Exception:
             logger.exception("Failed to fetch portfolio history (period=%s)", period)
             return {}
@@ -247,6 +266,9 @@ class BrokerClient:
                 }
                 for o in orders
             ]
+        except APIError as e:
+            logger.warning("Alpaca API error fetching orders: %s", e)
+            return []
         except Exception:
             logger.exception("Failed to fetch orders (status=%s)", status)
             return []

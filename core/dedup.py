@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 # Stopwords — common English words that add noise to headline comparisons
 # ---------------------------------------------------------------------------
 _STOPWORDS: frozenset[str] = frozenset({
+    # General English
     "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
     "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
     "has", "have", "had", "as", "it", "its", "that", "this", "his", "her",
@@ -39,6 +40,11 @@ _STOPWORDS: frozenset[str] = frozenset({
     "says", "said", "say", "report", "reports", "amid", "over", "after",
     "more", "than", "up", "down", "out", "into", "about", "will", "would",
     "could", "may", "not", "no", "what", "how", "when", "where", "who",
+    # Financial — generic action verbs that appear in many unrelated headlines
+    "surge", "surges", "rally", "rallies", "slump", "slumps",
+    "slide", "slides", "jump", "jumps", "plunge", "plunges",
+    "dive", "dives", "soar", "soars", "tumble", "tumbles",
+    "rise", "rises", "fall", "falls", "drop", "drops", "hit", "hits",
 })
 
 

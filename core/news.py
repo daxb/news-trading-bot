@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timezone
 
 import finnhub
+from finnhub.exceptions import FinnhubAPIException, FinnhubRequestException
 
 from config import settings
 
@@ -62,6 +63,17 @@ class NewsClient:
                 "Fetched %d general news articles (category=%s)", len(articles), category
             )
             return articles
+        except FinnhubAPIException as e:
+            if "429" in str(e) or "Too Many Requests" in str(e):
+                logger.warning(
+                    "Finnhub rate limit hit (60 req/min) — skipping this poll cycle"
+                )
+            else:
+                logger.warning("Finnhub API error (category=%s): %s", category, e)
+            return []
+        except FinnhubRequestException as e:
+            logger.warning("Finnhub request failed (category=%s): %s", category, e)
+            return []
         except Exception:
             logger.exception("Failed to fetch general news (category=%s)", category)
             return []
@@ -87,6 +99,9 @@ class NewsClient:
                 len(articles), ticker.upper(), from_date, to_date,
             )
             return articles
+        except (FinnhubAPIException, FinnhubRequestException) as e:
+            logger.warning("Finnhub error fetching company news for %s: %s", ticker.upper(), e)
+            return []
         except Exception:
             logger.exception(
                 "Failed to fetch company news for %s", ticker.upper()

@@ -295,3 +295,33 @@ def test_is_relevant_true_for_matching_article(gen):
 def test_is_relevant_false_for_irrelevant_article(gen):
     article = _article("Celebrity gala draws thousands to red carpet event")
     assert gen.is_relevant(article) is False
+
+
+# ---------------------------------------------------------------------------
+# source_count passthrough
+# ---------------------------------------------------------------------------
+
+def test_signal_includes_source_count(gen):
+    """Signal dict must carry through the article's source_count field."""
+    article = _article(
+        "Fed cuts rates unexpectedly, markets cheer",
+        sentiment_label="positive",
+        sentiment_score=0.92,
+    )
+    article["source_count"] = 3
+    signal = gen.generate_signal(article)
+    assert signal is not None
+    assert signal["source_count"] == 3
+
+
+def test_signal_default_source_count_is_one(gen):
+    """When source_count is absent from article, signal defaults to 1."""
+    article = _article(
+        "Fed cuts rates unexpectedly, markets cheer",
+        sentiment_label="positive",
+        sentiment_score=0.92,
+    )
+    article.pop("source_count", None)
+    signal = gen.generate_signal(article)
+    assert signal is not None
+    assert signal["source_count"] == 1

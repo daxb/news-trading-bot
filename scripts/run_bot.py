@@ -45,8 +45,19 @@ def main() -> None:
     logger.info("  FIONA — starting up")
     logger.info("=" * 60)
 
-    bot = BotScheduler()
-    bot.start()  # blocks until Ctrl-C / SIGTERM
+    try:
+        bot = BotScheduler()
+    except Exception:
+        logger.exception("Failed to initialize BotScheduler — check API keys and config")
+        sys.exit(1)
+
+    try:
+        bot.start()  # blocks until Ctrl-C / SIGTERM
+    except KeyboardInterrupt:
+        logger.info("Shutting down (KeyboardInterrupt)")
+    except Exception:
+        logger.exception("Bot crashed unexpectedly")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -190,6 +190,9 @@ class Database:
                 if rowid:
                     logger.debug("Saved article id=%s rowid=%d", params["article_id"], rowid)
                 return rowid
+        except sqlite3.OperationalError as e:
+            logger.warning("DB operational error saving article id=%s: %s", params.get("article_id"), e)
+            return None
         except Exception:
             logger.exception("Failed to save article id=%s", params.get("article_id"))
             return None
@@ -287,6 +290,9 @@ class Database:
                     params["action"], params["ticker"], params["confidence"],
                 )
                 return cursor.lastrowid
+        except sqlite3.OperationalError as e:
+            logger.warning("DB operational error saving signal for ticker=%s: %s", params.get("ticker"), e)
+            return None
         except Exception:
             logger.exception(
                 "Failed to save signal for ticker=%s", params.get("ticker")

@@ -73,6 +73,9 @@ class MacroClient:
                 "Fetched %d observations for %s", len(result), series_id
             )
             return result
+        except ValueError as e:
+            logger.warning("FRED data error for %s: %s", series_id, e)
+            return []
         except Exception:
             logger.exception("Failed to fetch series %s", series_id)
             return []
@@ -103,8 +106,13 @@ class MacroClient:
                 ex.submit(_fetch_one, sid, lbl): sid
                 for sid, lbl in KEY_INDICATORS.items()
             }
-            for future in as_completed(futures):
-                series_id, label, observations = future.result()
+            for future in as_completed(futures, timeout=30):
+                sid = futures[future]
+                try:
+                    series_id, label, observations = future.result()
+                except Exception:
+                    logger.warning("Indicator %s timed out or failed", sid)
+                    continue
                 if observations:
                     latest = observations[-1]
                     indicators[series_id] = {

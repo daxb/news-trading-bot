@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Rule table — ordered by priority (most reliable / highest-impact first)
 # ---------------------------------------------------------------------------
+# IMPORTANT: Rules are evaluated in order; the FIRST matching rule wins.
+# Place more specific / higher-conviction rules earlier. If you add a new
+# rule, consider where it should sit relative to existing rules.
+#
 # Each rule:
 #   theme               – machine-readable label stored with the signal
 #   keywords            – lowercase substrings; ANY match fires the rule

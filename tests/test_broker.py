@@ -96,11 +96,13 @@ def test_submit_market_order_sell():
     assert result["side"] == "sell"
 
 
-def test_submit_market_order_exception_returns_empty():
+def test_submit_market_order_exception_returns_error_detail():
+    """On failure, returned dict should contain an 'error' key with the reason."""
     broker = _make_broker()
-    broker._client.submit_order.side_effect = RuntimeError("fail")
+    broker._client.submit_order.side_effect = RuntimeError("insufficient buying power")
     result = broker.submit_market_order("SPY", 5.0, "buy")
-    assert result == {}
+    assert "error" in result
+    assert "insufficient buying power" in result["error"]
 
 
 # ---------------------------------------------------------------------------

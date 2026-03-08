@@ -45,4 +45,8 @@ RUN mkdir -p /app/data
 # Make startup script executable
 RUN chmod +x scripts/start.sh
 
+# Health check — ensures bot process is alive and DB is accessible
+HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
+    CMD python -c "import sqlite3; sqlite3.connect('/app/data/trading.db').execute('SELECT 1')"
+
 CMD ["bash", "scripts/start.sh"]

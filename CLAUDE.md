@@ -183,8 +183,9 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - 7% weekly loss → pause until next week
 - 15% max drawdown → require manual reset
 - Time-based exits: close positions after 2–4 hours if thesis isn't working
-- Minimum confidence threshold of 0.5 to execute any trade
-- Require 2+ independent news sources before trading
+- Minimum confidence threshold of 0.4 (configurable via `SIGNAL_CONVICTION_THRESHOLD`)
+- Multi-source confirmation: `MIN_SOURCE_COUNT` defaults to 1 for paper trading; **set to 2 via env var for production** to require independent corroboration before executing
+- Staggered dashboard cache TTLs are configured in `dashboard/app.py` (45s signals, 60s broker, 90s forex, 120s FRED)
 
 ## Log Review Process
 

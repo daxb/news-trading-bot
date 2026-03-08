@@ -5,3 +5,7 @@ __pycache__/
 data/*.db
 .DS_Store
 logs/
+.pytest_cache/
+.mypy_cache/
+.streamlit/
+*.egg-info/

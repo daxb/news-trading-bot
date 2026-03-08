@@ -129,7 +129,7 @@ Bot and dashboard share a SQLite volume at `./data/trading.db`.
 
 ### Fly.io
 
-The app is deployed at `https://trading-bot-lingering-lake-4314.fly.dev`.
+The app is deployed at `https://<your-app-name>.fly.dev` (e.g. `trading-bot-lingering-lake-4314`).
 
 **Deploys are automatic** — every push to `main` triggers `.github/workflows/fly-deploy.yml`,
 which builds and deploys to Fly.io via the `FLY_API_TOKEN` secret already configured in the repo.
@@ -296,3 +296,15 @@ Telegram alerts are sent by `core/alerts.py`. All alert functions no-op silently
 | Daily audit report | 16:10 ET, Mon–Fri (after market close) | 24h signal stats, per-theme breakdown, pipeline health, anomalies |
 | Startup | On bot start | Confirmation message |
 | Shutdown | On clean shutdown (Ctrl-C or SIGTERM) | Confirmation message |
+
+## Troubleshooting
+
+| Symptom | Likely Cause | Fix |
+|---------|-------------|-----|
+| Bot starts but generates no signals | Finnhub API key invalid or rate-limited (60 req/min) | Check `FINNHUB_API_KEY` in `.env`; look for "rate limit" warnings in logs |
+| Dashboard won't load | Port 8501 already in use | Kill other Streamlit processes: `lsof -i :8501` |
+| Alpaca orders fail with "insufficient buying power" | Paper account needs reset or has no funds | Reset via Alpaca dashboard → Paper Trading → Reset Account |
+| No macro data loading | FRED API key missing or rate-limited | Check `FRED_API_KEY` in `.env`; FRED allows 120 req/min |
+| Signals generated but none executed | `MIN_SOURCE_COUNT` > 1 and no corroborating sources | Set `MIN_SOURCE_COUNT=1` for paper trading, or wait for multi-source confirmation |
+| OANDA signals skipped | OANDA keys not configured | Set `OANDA_API_KEY` and `OANDA_ACCOUNT_ID` in `.env` (optional — forex features only) |
+| Bot crashes on startup | Invalid config values (e.g., negative percentages) | Check `.env` for typos; settings are validated at import time |

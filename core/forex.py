@@ -64,6 +64,9 @@ class ForexBroker:
                 "portfolio_value": float(acct["NAV"]),
                 "currency":      acct.get("currency", "USD"),
             }
+        except V20Error as e:
+            logger.warning("OANDA API error fetching account: %s", e)
+            return {}
         except Exception:
             logger.exception("Failed to fetch OANDA account")
             return {}
@@ -86,6 +89,9 @@ class ForexBroker:
             mid = round((bid + ask) / 2, 5)
             logger.debug("Latest price %s: %.5f", instrument, mid)
             return mid
+        except V20Error as e:
+            logger.warning("OANDA API error getting price for %s: %s", instrument, e)
+            return None
         except Exception:
             logger.exception("Failed to get latest price for %s", instrument)
             return None
@@ -139,6 +145,9 @@ class ForexBroker:
                         "unrealized_pl": float(pos.get("unrealizedPL", 0)),
                     })
             return result
+        except V20Error as e:
+            logger.warning("OANDA API error fetching positions: %s", e)
+            return []
         except Exception:
             logger.exception("Failed to fetch open OANDA positions")
             return []
@@ -235,6 +244,9 @@ class ForexBroker:
                     "filled_avg_price": t.get("price", None),
                 })
             return list(reversed(result))  # newest first
+        except V20Error as e:
+            logger.warning("OANDA API error fetching recent trades: %s", e)
+            return []
         except Exception:
             logger.exception("Failed to fetch OANDA recent trades")
             return []

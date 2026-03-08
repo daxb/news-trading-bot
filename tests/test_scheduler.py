@@ -11,6 +11,10 @@ Run with:
 
 import pytest
 
+# core.scheduler transitively imports oandapyV20 and feedparser
+pytest.importorskip("oandapyV20", reason="oandapyV20 not installed")
+pytest.importorskip("feedparser", reason="feedparser not installed")
+
 
 # ---------------------------------------------------------------------------
 # Fakes / stubs
@@ -185,3 +189,127 @@ def test_poll_all_duplicates_skips_sentiment():
     bot = _make_scheduler(news=FakeNews(articles), sentiment=FailSentiment(), db=db)
 
     bot._poll()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Extended pipeline tests
+# ---------------------------------------------------------------------------
+
+class FakeRSS:
+    """Stub RSS client."""
+    def __init__(self, articles=None):
+        self.articles = articles or []
+    def get_articles(self):
+        return self.articles
+
+
+class FakeRiskManager:
+    def __init__(self, approved=True, reason=""):
+        self._approved = approved
+        self._reason = reason
+    def can_trade(self, ticker=None, action=None):
+        return self._approved, self._reason
+    def position_qty(self, ticker):
+        return 10.0 if self._approved else 0.0
+
+
+class FakeMacroCtx:
+    def tick(self): pass
+    def adjust_signals(self, signals): return signals
+
+
+class FakeExitMgr:
+    def check_exits(self): pass
+
+
+class FakeBrokerForScheduler:
+    def __init__(self, has_position=True):
+        self._has_position = has_position
+        self.submitted_orders = []
+    def get_position(self, ticker):
+        return {"symbol": ticker, "qty": 10} if self._has_position else None
+    def get_latest_price(self, ticker):
+        return 500.0
+    def submit_market_order(self, ticker, qty, side):
+        order = {"id": "test-order", "status": "filled"}
+        self.submitted_orders.append(order)
+        return order
+
+
+def _make_extended_scheduler(
+    news=None, rss=None, sentiment=None, signals=None, db=None,
+    risk=None, broker=None, forex=None, forex_risk=None,
+    macro_ctx=None, exit_mgr=None,
+):
+    from core.scheduler import BotScheduler
+    import threading
+    bot = BotScheduler.__new__(BotScheduler)
+    bot._stop_event = threading.Event()
+    bot._news = news or FakeNews()
+    bot._rss = rss or FakeRSS()
+    bot._sentiment = sentiment or FakeSentiment()
+    bot._signals = signals or FakeSignalGen()
+    bot._db = db or FakeDB()
+    bot._broker = broker or FakeBrokerForScheduler()
+    bot._risk = risk or FakeRiskManager()
+    bot._forex = forex
+    bot._forex_risk = forex_risk
+    bot._macro_ctx = macro_ctx or FakeMacroCtx()
+    bot._exit_mgr = exit_mgr or FakeExitMgr()
+    return bot
+
+
+def test_poll_with_rss_articles():
+    """RSS articles must be fetched and contribute to the pipeline."""
+    finnhub = [{"id": 1, "headline": "Fed cuts rates", "summary": "", "source": "Finnhub",
+                "url": "", "category": "general", "datetime": None, "related": ""}]
+    rss = [{"id": 2, "headline": "Markets surge on rate cut", "summary": "", "source": "BBC",
+            "url": "", "category": "rss", "datetime": None, "related": ""}]
+    db = FakeDB()
+    bot = _make_extended_scheduler(news=FakeNews(finnhub), rss=FakeRSS(rss), db=db)
+    bot._poll()
+    assert len(db.saved_articles) == 2
+
+
+def test_poll_risk_check_blocks_execution():
+    """Risk manager returning False must prevent order execution."""
+    articles = [{"id": 1, "headline": "Fed cuts rates", "summary": "", "source": "Reuters",
+                 "url": "", "category": "general", "datetime": None, "related": ""}]
+    signal = {"article_id": 1, "ticker": "SPY", "action": "buy",
+              "confidence": 0.85, "theme": "fed_dovish", "rationale": "test"}
+    db = FakeDB()
+    # Need a DB that supports update_signal_status for skip recording
+    db.update_signal_status = lambda *a, **kw: True
+    db.get_recent_headlines = lambda **kw: []
+    db.count_signal_sources_since = lambda *a, **kw: 1
+
+    risk = FakeRiskManager(approved=False, reason="daily limit")
+    broker = FakeBrokerForScheduler()
+    bot = _make_extended_scheduler(
+        news=FakeNews(articles),
+        signals=FakeSignalGen([signal]),
+        db=db, risk=risk, broker=broker,
+    )
+    bot._poll()
+    assert len(broker.submitted_orders) == 0
+
+
+def test_poll_equity_sell_no_position_skips():
+    """Equity sell signal with no existing position must be skipped."""
+    articles = [{"id": 1, "headline": "Recession fears mount", "summary": "", "source": "Reuters",
+                 "url": "", "category": "general", "datetime": None, "related": ""}]
+    signal = {"article_id": 1, "ticker": "SPY", "action": "sell",
+              "confidence": 0.85, "theme": "recession_risk", "rationale": "test"}
+    db = FakeDB()
+    db.update_signal_status = lambda *a, **kw: True
+    db.get_recent_headlines = lambda **kw: []
+    db.count_signal_sources_since = lambda *a, **kw: 1
+
+    broker = FakeBrokerForScheduler(has_position=False)
+    bot = _make_extended_scheduler(
+        news=FakeNews(articles),
+        signals=FakeSignalGen([signal]),
+        db=db, broker=broker,
+    )
+    bot._poll()
+    assert len(broker.submitted_orders) == 0

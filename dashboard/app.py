@@ -354,7 +354,7 @@ with tab_portfolio:
     if not all_position_rows:
         st.info("No open positions.")
     else:
-        st.dataframe(all_position_rows, width='stretch', hide_index=True)
+        st.dataframe(all_position_rows, use_container_width=True, hide_index=True)
 
     st.subheader("Open Orders")
 
@@ -372,7 +372,7 @@ with tab_portfolio:
                 "Status":   o["status"],
                 "Submitted": o["submitted_at"][:19] if o["submitted_at"] else "",
             })
-        st.dataframe(order_rows, width='stretch', hide_index=True)
+        st.dataframe(order_rows, use_container_width=True, hide_index=True)
 
     @st.fragment
     def render_recent_trades() -> None:
@@ -396,7 +396,7 @@ with tab_portfolio:
                     "Status":      o["status"],
                     "Filled At":   o["filled_at"][:19] if o["filled_at"] else "—",
                 })
-            st.dataframe(trade_rows, width='stretch', hide_index=True)
+            st.dataframe(trade_rows, use_container_width=True, hide_index=True)
 
     render_recent_trades()
 
@@ -441,7 +441,7 @@ def render_signals_tab() -> None:
                 "Executed":     s["executed_at"][:19] if s["executed_at"] else "—",
                 "Rationale":    s["rationale"],
             })
-        st.dataframe(rows, width='stretch', hide_index=True)
+        st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 # ── News ─────────────────────────────────────────────────────────────────────
@@ -483,7 +483,7 @@ def render_news_tab() -> None:
                 "Score":     f"{a.get('sentiment_score', 0):.2f}",
                 "Date":      (a["datetime"] or "")[:19],
             })
-        st.dataframe(rows, width='stretch', hide_index=True)
+        st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 with tab_signals:

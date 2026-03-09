@@ -62,8 +62,8 @@ _EXPECTED_SOURCES = {
     "BBC World",
     "BBC Business",
     "CNBC Top News",
-    "AP Top News",
-    "AP Business",
+    "NPR News",
+    "The Guardian World",
     "finnhub",
 }
 

@@ -78,6 +78,7 @@ class BotScheduler:
 
         # Fetch from all sources concurrently
         raw_articles: list[dict] = []
+        finnhub_articles: list[dict] = []
         sources = {
             "finnhub": self._news.get_general_news,
             "rss":     self._rss.get_articles,
@@ -90,9 +91,20 @@ class BotScheduler:
             for future in as_completed(future_to_name):
                 name = future_to_name[future]
                 try:
-                    raw_articles.extend(future.result())
+                    articles = future.result()
+                    if name == "finnhub":
+                        finnhub_articles = articles
+                    else:
+                        raw_articles.extend(articles)
                 except Exception:
                     logger.exception("%s fetch failed — skipping", name)
+
+        # Stamp Finnhub articles with source="finnhub" so the auditor can
+        # detect them by source name (Finnhub stores the publisher name, e.g.
+        # "Reuters", in the source field — not "finnhub").
+        for a in finnhub_articles:
+            a["source"] = "finnhub"
+        raw_articles.extend(finnhub_articles)
 
         if not raw_articles:
             logger.info("No articles returned this cycle.")

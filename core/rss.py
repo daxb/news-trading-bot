@@ -42,14 +42,12 @@ _FEEDS: list[dict] = [
         "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
     },
     {
-        "name": "AP Top News",
-        "url": "https://feeds.apnews.com/rss/apf-topnews",
-        "fallback_url": "https://feeds.apnews.com/apnews/topnews",
+        "name": "NPR News",
+        "url": "https://feeds.npr.org/1001/rss.xml",
     },
     {
-        "name": "AP Business",
-        "url": "https://feeds.apnews.com/rss/apf-business",
-        "fallback_url": "https://feeds.apnews.com/apnews/business",
+        "name": "The Guardian World",
+        "url": "https://www.theguardian.com/world/rss",
     },
 ]
 
@@ -96,22 +94,28 @@ class RSSClient:
         name = feed["name"]
         url  = feed["url"]
         parsed = feedparser.parse(url)
+
+        http_status = parsed.get("status")
+        if http_status and http_status not in (200, 301, 302):
+            logger.warning("RSS feed '%s' HTTP %d — skipping", name, http_status)
+            return []
+
         if parsed.bozo and not parsed.entries:
-            fallback = feed.get("fallback_url")
-            if fallback:
+            if parsed.bozo_exception:
                 logger.warning(
-                    "RSS feed '%s' parse error on primary URL — trying fallback", name
+                    "RSS feed '%s' parse error: %s — skipping",
+                    name, parsed.bozo_exception,
                 )
-                parsed = feedparser.parse(fallback)
-            if parsed.bozo and not parsed.entries:
+            else:
                 logger.warning("RSS feed '%s' parse error — skipping", name)
-                return []
+            return []
+
         articles = [
             _normalize_entry(e, name)
             for e in parsed.entries
             if e.get("link")
         ]
-        logger.debug("RSS '%s': fetched %d articles", name, len(articles))
+        logger.info("RSS '%s': fetched %d articles", name, len(articles))
         return articles
 
     def get_articles(self) -> list[dict]:

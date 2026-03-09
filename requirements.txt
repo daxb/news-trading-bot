@@ -7,7 +7,7 @@ pytest==7.4.4
 torch==2.10.0
 transformers==5.2.0
 apscheduler==3.11.2
-streamlit==1.35.0
+streamlit==1.41.0
 feedparser==6.0.11
 oandapyV20==0.7.2
 yfinance==0.2.40

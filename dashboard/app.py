@@ -549,7 +549,7 @@ with tab_audit:
                 "Avg Conf":     f"{data['avg_confidence']:.3f}",
                 "Skip Reasons": skip_r_str,
             })
-        st.dataframe(theme_rows, width="stretch", hide_index=True)
+        st.dataframe(theme_rows, use_container_width=True, hide_index=True)
 
     # Pipeline health
     st.subheader("Pipeline Health")
@@ -563,7 +563,7 @@ with tab_audit:
             {"Source": src, "Articles": cnt}
             for src, cnt in sorted(pipeline["by_source"].items(), key=lambda x: -x[1])
         ]
-        st.dataframe(source_rows, width="stretch", hide_index=True)
+        st.dataframe(source_rows, use_container_width=True, hide_index=True)
 
     # P&L by theme
     if pnl:
@@ -577,6 +577,6 @@ with tab_audit:
                 "Win Rate":    f"{data['win_rate']:.0%}",
                 "Avg Return":  f"{sign}{data['avg_return_pct']:.2f}%",
             })
-        st.dataframe(pnl_rows, width="stretch", hide_index=True)
+        st.dataframe(pnl_rows, use_container_width=True, hide_index=True)
     else:
         st.info("No closed trades with fill and exit prices recorded yet.")

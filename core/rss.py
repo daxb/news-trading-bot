@@ -30,12 +30,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _FEEDS: list[dict] = [
     {
-        "name": "BBC World",
-        "url": "http://feeds.bbci.co.uk/news/world/rss.xml",
+        "name": "Sky News World",
+        "url": "https://feeds.skynews.com/feeds/rss/world.xml",
     },
     {
-        "name": "BBC Business",
-        "url": "http://feeds.bbci.co.uk/news/business/rss.xml",
+        "name": "Sky News Business",
+        "url": "https://feeds.skynews.com/feeds/rss/business.xml",
     },
     {
         "name": "CNBC Top News",

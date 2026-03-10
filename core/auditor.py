@@ -54,18 +54,13 @@ import logging
 from datetime import datetime, timezone
 
 from core.db import Database
+from core.rss import _FEEDS as _RSS_FEEDS
 
 logger = logging.getLogger(__name__)
 
-# Known RSS source names — used to detect broken feeds.
-_EXPECTED_SOURCES = {
-    "BBC World",
-    "BBC Business",
-    "CNBC Top News",
-    "NPR News",
-    "The Guardian World",
-    "finnhub",
-}
+# Derived from the live feed registry so this list never drifts out of sync.
+# Adding or removing a feed in core/rss.py automatically updates this check.
+_EXPECTED_SOURCES: set[str] = {f["name"] for f in _RSS_FEEDS} | {"finnhub"}
 
 
 def _empty_metrics(hours: int) -> dict:

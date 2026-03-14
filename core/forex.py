@@ -152,6 +152,15 @@ class ForexBroker:
             logger.exception("Failed to fetch open OANDA positions")
             return []
 
+    def is_instrument_tradeable(self, instrument: str) -> bool:
+        """Return True if OANDA reports the instrument as currently tradeable."""
+        try:
+            r = PricingInfo(self._account_id, params={"instruments": instrument.upper()})
+            self._client.request(r)
+            return bool(r.response["prices"][0].get("tradeable", True))
+        except Exception:
+            return True  # fail open — let the close attempt proceed and handle errors naturally
+
     # ------------------------------------------------------------------
     # Orders
     # ------------------------------------------------------------------
@@ -267,6 +276,9 @@ class ForexBroker:
 
     def close_position(self, instrument: str) -> dict:
         """Close the entire open position for an instrument (long or short)."""
+        if not self.is_instrument_tradeable(instrument):
+            logger.info("[ORDER] %s market is closed — skipping close attempt", instrument)
+            return {}
         try:
             pos = self.get_position(instrument)
             if not pos:

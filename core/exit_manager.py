@@ -156,17 +156,39 @@ class ExitManager:
     # Order execution
     # ------------------------------------------------------------------
 
-    _CLOSE_RETRY_SECS = 900  # 15 minutes between close attempts after a failure
+    _CLOSE_RETRY_SECS = 900          # 15 min — transient API errors / market hours check
+    _CLOSE_MARKET_CLOSED_SECS = 14_400  # 4 hours — market confirmed closed
 
     def _close(self, ticker: str, reason: str, is_forex: bool) -> None:
         now = time.monotonic()
         last_attempt = self._close_attempts.get(ticker, 0.0)
-        if now - last_attempt < self._CLOSE_RETRY_SECS:
-            remaining = int(self._CLOSE_RETRY_SECS - (now - last_attempt))
-            logger.debug("Close %s deferred — market may be halted, retrying in %ds", ticker, remaining)
+        elapsed = now - last_attempt
+
+        # Check market status before deciding the backoff window.
+        # If the forex market is closed we use a 4-hour cooldown so the scheduler
+        # doesn't hammer OANDA every 15 minutes across an entire weekend.
+        market_closed = (
+            is_forex
+            and self._forex is not None
+            and not self._forex.is_instrument_tradeable(ticker)
+        )
+        backoff = self._CLOSE_MARKET_CLOSED_SECS if market_closed else self._CLOSE_RETRY_SECS
+
+        if elapsed < backoff:
+            remaining = int(backoff - elapsed)
+            label = "market closed" if market_closed else "market may be halted"
+            logger.debug("Close %s deferred — %s, retrying in %ds", ticker, label, remaining)
             return
 
         self._close_attempts[ticker] = now
+
+        if market_closed:
+            logger.info(
+                "Skipping close of %s — market closed, will retry in %d min",
+                ticker, self._CLOSE_MARKET_CLOSED_SECS // 60,
+            )
+            return
+
         logger.info("Closing %s: %s", ticker, reason)
         broker = self._forex if is_forex else self._broker
         order = broker.close_position(ticker)

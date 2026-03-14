@@ -20,10 +20,10 @@ Data Ingestion → NLP/Sentiment → Signal Generation → Order Execution → R
 
 ### Pipeline Stages
 
-1. **Data Ingestion**: Finnhub API, RSS feeds (BBC, AP), GDELT, NewsAPI (free tier)
-2. **NLP/Sentiment**: FinBERT (`ProsusAI/finbert`) for sentiment, spaCy for NER, keyword-based topic classification
-3. **Signal Generation**: Rule-based event→trade mapping with confidence scoring
-4. **Execution**: Alpaca (equities), OANDA (forex), IBKR (commodities/futures)
+1. **Data Ingestion**: Finnhub API, RSS feeds (CNBC, Sky News, NPR, The Guardian)
+2. **NLP/Sentiment**: FinBERT (`ProsusAI/finbert`) for sentiment, spaCy for NER, keyword-based topic classification; broad pre-filter keywords pass articles to FinBERT, conviction threshold (0.4) handles false positives
+3. **Signal Generation**: Rule-based event→trade mapping with confidence scoring (17 themes)
+4. **Execution**: Alpaca (equities), OANDA (forex + commodities)
 5. **Risk Management**: Position sizing (quarter-Kelly + ATR), circuit breakers, time-based stops
 6. **Monitoring**: Telegram alerts (preferred), Streamlit dashboard, structured logging; FRED indicators fetched concurrently (`ThreadPoolExecutor(max_workers=6)`); dashboard uses staggered cache TTLs (45s/60s/90s/120s) to prevent synchronized expiration storms
 
@@ -44,6 +44,7 @@ news-trading-bot/
 │   └── settings.py              # Loads .env, defines all thresholds + risk limits
 ├── core/                        # Core pipeline modules (flat, not nested)
 │   ├── alerts.py                # Telegram signal + exit notifications
+│   ├── auditor.py               # Audit metrics engine (signals, pipeline health, P&L, anomalies)
 │   ├── backtester.py            # Walk-forward backtest engine (yfinance)
 │   ├── broker.py                # Alpaca wrapper (account, positions, orders)
 │   ├── db.py                    # SQLite schema + repository; indexes on signals.created_at, signals.status, articles.fetched_at
@@ -54,14 +55,16 @@ news-trading-bot/
 │   ├── macro_context.py         # Regime-aware signal confidence adjustment
 │   ├── news.py                  # Finnhub wrapper (general + company news)
 │   ├── risk_manager.py          # Position sizing, daily loss limit, trade cap
-│   ├── rss.py                   # Concurrent RSS feed fetcher
+│   ├── rss.py                   # Concurrent RSS feed fetcher (CNBC, Sky News, NPR, Guardian)
 │   ├── scheduler.py             # APScheduler polling loop (full pipeline)
 │   ├── sentiment.py             # FinBERT sentiment scoring
-│   └── signal_gen.py            # Rule-based event→trade engine (17 themes)
+│   └── signal_gen.py            # Rule-based event→trade engine (17 themes); broad pre-filter keywords, FinBERT+conviction threshold for false positives
 ├── dashboard/
 │   └── app.py                   # Streamlit monitoring dashboard; Broker/Macro/Forex clients initialized concurrently on cold start; selective refresh ("Refresh" skips 1hr FRED cache, "Refresh All" clears everything); staggered TTLs per data type
 ├── scripts/
 │   ├── backtest.py              # Walk-forward backtest CLI
+│   ├── fetch_logs.py            # Fetch Fly.io logs → logs/fly_YYYY-MM-DD_HH-MM.txt (NOTE: -n flag broken with current flyctl; use flyctl logs directly)
+│   ├── run_audit.py             # Run audit engine against live DB via flyctl ssh console
 │   ├── run_bot.py               # Main bot entry point
 │   └── start.sh                 # Docker startup script (bot + dashboard)
 ├── tests/
@@ -85,7 +88,7 @@ news-trading-bot/
 | Macro Data        | `fredapi`                               | 0.5+      |
 | Market Data       | `yfinance`                              | 1.2+      |
 | Equity Broker     | `alpaca-py`                             | 0.26+     |
-| Forex Broker      | `oandapyV20`                            | (add later)|
+| Forex Broker      | `oandapyV20`                            | 0.6+      |
 | Scheduling        | `apscheduler`                           | 3.11+     |
 | Database          | SQLite (MVP) → PostgreSQL (scale)       | —         |
 | ML Framework      | `torch`                                 | 2.10+     |
@@ -113,14 +116,12 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 
 ## Data Sources
 
-| Source         | What It Provides                  | Cost  | Rate Limit       |
-|---------------|-----------------------------------|-------|-------------------|
-| Finnhub       | Financial news, market data       | Free  | 60 req/min        |
-| RSS (BBC, AP) | Geopolitical headlines            | Free  | No limit          |
-| GDELT         | Global event database             | Free  | No key needed     |
-| NewsAPI       | Broad English-language news       | Free  | 100 req/day       |
-| FRED          | 800K+ economic time series        | Free  | 120 req/min       |
-| yfinance      | Stock/commodity/forex prices      | Free  | Unofficial        |
+| Source                          | What It Provides                  | Cost  | Rate Limit       |
+|---------------------------------|-----------------------------------|-------|-------------------|
+| Finnhub                         | Financial news, market data       | Free  | 60 req/min        |
+| RSS (CNBC, Sky News, NPR, Guardian) | Macro + geopolitical headlines | Free  | No limit          |
+| FRED                            | 800K+ economic time series        | Free  | 120 req/min       |
+| yfinance                        | Stock/commodity/forex prices      | Free  | Unofficial        |
 
 ## Phased Roadmap
 
@@ -148,7 +149,7 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - [x] Risk controls — position sizing, daily loss limit (`core/risk_manager.py`)
 - [x] Macro context filter — FRED-based regime-aware confidence adjustment (`core/macro_context.py`)
 - [x] Concurrent news fetching — ThreadPoolExecutor in scheduler + RSS client
-- [x] RSS feeds — BBC, CNBC, MarketWatch, Yahoo Finance (`core/rss.py`)
+- [x] RSS feeds — CNBC, Sky News, NPR, The Guardian (`core/rss.py`)
 
 ### Phase 3 — Harden & Validate ✅ COMPLETE
 - [x] Walk-forward backtesting (`core/backtester.py` + `scripts/backtest.py`)
@@ -160,7 +161,9 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 
 ### Phase 4 — Go Live ← CURRENT PHASE
 - [x] Deploy to Fly.io (switched from Oracle Cloud — free tier, simpler ops) (`fly.toml`)
-- [ ] Confirm Fly.io deployment health (dashboard reachable, bot running)
+- [x] Confirm Fly.io deployment health (bot running, Telegram alerts firing, OANDA exits working)
+- [x] Audit engine + runner (`core/auditor.py` + `scripts/run_audit.py`)
+- [x] Broaden signal pre-filter keywords so FinBERT sees relevant articles (was dropping 100%)
 - [ ] Live trading with minimum capital ($500–2,000)
 - [ ] Parallel paper trading for comparison
 - [ ] ML-based signal refinement (gradient boosting)
@@ -175,6 +178,7 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - **Quarter-Kelly position sizing** — mathematically sound but conservative
 - **Multi-source confirmation** — never trade on a single headline
 - **Staggered dashboard TTLs** — cache expiry times are intentionally offset per data type (45s signals/articles, 60s broker, 90s forex, 120s FRED macro) so refreshes never all fire at once; "Refresh" preserves the expensive 1hr FRED cache while "Refresh All" clears everything
+- **Broad pre-filter + tight conviction threshold** — signal rule keywords are intentionally wide (e.g. "gold", "oil", "federal reserve") so real headlines pass through to FinBERT; the 0.4 conviction threshold and rule `actions` map handle false positives downstream
 
 ## Risk Management Rules
 
@@ -237,24 +241,19 @@ The app (`trading-bot-lingering-lake-4314`) writes all output to stdout. Fly.io 
 
 **Quick access (terminal):**
 ```bash
-# Live tail
+# Live tail (recommended — -n flag is broken in current flyctl)
 flyctl logs --app trading-bot-lingering-lake-4314
 
-# Last 500 lines
-flyctl logs --app trading-bot-lingering-lake-4314 -n 500
-
-# Filter for errors inline
-flyctl logs --app trading-bot-lingering-lake-4314 -n 500 | grep ERROR
+# Filter for errors inline (pipe from live tail, Ctrl-C when done)
+flyctl logs --app trading-bot-lingering-lake-4314 | grep ERROR
 ```
 
-**Save and summarise with the fetch script:**
+> **Note:** `flyctl logs -n <N>` is broken in current flyctl versions (`unknown command "N"`). Use the live tail and copy output manually, or use `fetch_logs.py` which wraps the same command (also broken until flyctl is fixed).
+
+**Audit report (queries DB directly — more reliable than log scraping):**
 ```bash
-python scripts/fetch_logs.py              # fetch last 200 lines → logs/fly_YYYY-MM-DD_HH-MM.txt
-python scripts/fetch_logs.py -n 500       # larger window
-python scripts/fetch_logs.py --errors     # print ERROR lines after saving
-python scripts/fetch_logs.py --signals    # print [SIGNAL] lines after saving
-python scripts/fetch_logs.py --orders     # print [ORDER] lines after saving
-python scripts/fetch_logs.py --risk       # print [RISK] lines after saving
+flyctl ssh console -a trading-bot-lingering-lake-4314 --command "python /app/scripts/run_audit.py"
+flyctl ssh console -a trading-bot-lingering-lake-4314 --command "python /app/scripts/run_audit.py --hours 48"
 ```
 
 ### Structured Log Markers
@@ -269,14 +268,23 @@ Key events are tagged so you can grep them instantly:
 | `ERROR` | All modules | Unexpected exception — investigate immediately |
 | `WARNING` | All modules | Degraded operation — worth reviewing |
 
-### Claude Code Review Workflow
+### Audit Report (preferred)
 
-1. **Fetch** the latest logs:
+Queries the live SQLite DB — more structured and reliable than log scraping:
+
+```bash
+flyctl ssh console -a trading-bot-lingering-lake-4314 --command "python /app/scripts/run_audit.py"
+```
+
+Paste the output to Claude Code for review. The report covers signals, skip rates, pipeline health by source, P&L by theme, and anomaly detection.
+
+### Claude Code Review Workflow (log-based)
+
+1. **Tail** the latest logs:
    ```bash
-   python scripts/fetch_logs.py -n 500
+   flyctl logs --app trading-bot-lingering-lake-4314
    ```
-2. **Ask Claude Code** to review the saved file:
-   > "Read `logs/<latest-file>.txt` and summarise any errors, missed signals, and anomalies"
+2. **Paste output** to Claude Code for review
 3. **Drill down** with follow-up questions:
    > "Show me all [RISK] events in that file and explain what triggered each one"
    > "Were there any [SIGNAL] lines that did not produce a matching [ORDER]? Why not?"

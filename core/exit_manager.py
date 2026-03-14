@@ -14,6 +14,7 @@ a restart mid-hold would simply re-evaluate from the current price.
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 
 from config import settings
@@ -37,6 +38,7 @@ class ExitManager:
         self._forex = forex
         self._db = db
         self._peak_prices: dict[str, float] = {}  # high-water marks (long) / low-water marks (short)
+        self._close_attempts: dict[str, float] = {}  # ticker → monotonic time of last close attempt
         logger.info(
             "ExitManager ready — max_hold=%.1fh, trailing_stop=%.1f%%",
             settings.MAX_HOLD_HOURS,
@@ -154,7 +156,17 @@ class ExitManager:
     # Order execution
     # ------------------------------------------------------------------
 
+    _CLOSE_RETRY_SECS = 900  # 15 minutes between close attempts after a failure
+
     def _close(self, ticker: str, reason: str, is_forex: bool) -> None:
+        now = time.monotonic()
+        last_attempt = self._close_attempts.get(ticker, 0.0)
+        if now - last_attempt < self._CLOSE_RETRY_SECS:
+            remaining = int(self._CLOSE_RETRY_SECS - (now - last_attempt))
+            logger.debug("Close %s deferred — market may be halted, retrying in %ds", ticker, remaining)
+            return
+
+        self._close_attempts[ticker] = now
         logger.info("Closing %s: %s", ticker, reason)
         broker = self._forex if is_forex else self._broker
         order = broker.close_position(ticker)
@@ -165,8 +177,12 @@ class ExitManager:
                 signal = self._db.get_last_executed_signal(ticker)
                 if signal:
                     self._db.update_signal_exit_price(signal["id"], exit_price)
-            # Clear peak tracking for this position
+            # Clear tracking for this position
             self._peak_prices.pop(ticker, None)
+            self._close_attempts.pop(ticker, None)
             send_exit_alert(ticker, reason, order.get("id", ""))
         else:
-            logger.warning("Failed to close %s — will retry next cycle", ticker)
+            logger.warning(
+                "Failed to close %s — will retry in %d min",
+                ticker, self._CLOSE_RETRY_SECS // 60,
+            )

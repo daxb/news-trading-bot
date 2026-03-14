@@ -179,6 +179,20 @@ class ForexBroker:
             )
             return {}
 
+        # Check instrument is tradeable before submitting to avoid known-bad rejections
+        try:
+            pr = PricingInfo(self._account_id, params={"instruments": instrument.upper()})
+            self._client.request(pr)
+            price_data = pr.response["prices"][0]
+            if not price_data.get("tradeable", True):
+                logger.warning(
+                    "[ORDER] %s is not tradeable right now — skipping order", instrument
+                )
+                return {}
+        except V20Error as e:
+            logger.warning("[ORDER] Could not verify tradeable status for %s: %s — skipping", instrument, e)
+            return {}
+
         order_body = {
             "order": {
                 "type":       "MARKET",

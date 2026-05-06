@@ -292,3 +292,103 @@ def test_get_last_executed_signal(db):
     result = db.get_last_executed_signal("SPY")
     assert result is not None
     assert result["id"] == sid2
+
+
+# ---------------------------------------------------------------------------
+# Cooldown lookup + pending expiry
+# ---------------------------------------------------------------------------
+
+def test_has_recent_signal_pending(db):
+    """has_recent_signal() must return True for a pending signal in window."""
+    db.save_article(_make_article())
+    db.save_signal(_make_signal())  # status defaults to pending
+    assert db.has_recent_signal("SPY", "buy", "risk_on", minutes=30) is True
+
+
+def test_has_recent_signal_executed(db):
+    """has_recent_signal() must return True for an executed signal in window."""
+    from datetime import datetime, timezone
+    db.save_article(_make_article())
+    sid = db.save_signal(_make_signal())
+    db.update_signal_status(sid, "executed", executed_at=datetime.now(timezone.utc).isoformat())
+    assert db.has_recent_signal("SPY", "buy", "risk_on", minutes=30) is True
+
+
+def test_has_recent_signal_skipped_cooldown_counts(db):
+    """A prior cooldown suppression must keep the cooldown active."""
+    db.save_article(_make_article())
+    sid = db.save_signal(_make_signal())
+    # Mark as skipped with the cooldown_active reason
+    db.update_signal_status(sid, "skipped", skip_reason="cooldown_active")
+    assert db.has_recent_signal("SPY", "buy", "risk_on", minutes=30) is True
+
+
+def test_has_recent_signal_skipped_other_reason_does_not_count(db):
+    """Skipped signals with a non-cooldown reason must not extend cooldown."""
+    db.save_article(_make_article())
+    sid = db.save_signal(_make_signal())
+    db.update_signal_status(sid, "skipped", skip_reason="position_sizing_failed")
+    assert db.has_recent_signal("SPY", "buy", "risk_on", minutes=30) is False
+
+
+def test_has_recent_signal_outside_window_returns_false(db):
+    """A signal older than the lookback window must not match."""
+    from datetime import datetime, timezone, timedelta
+    old = (datetime.now(timezone.utc) - timedelta(minutes=120)).isoformat()
+    db.save_article(_make_article())
+    db.save_signal({**_make_signal(), "created_at": old})
+    assert db.has_recent_signal("SPY", "buy", "risk_on", minutes=30) is False
+
+
+def test_has_recent_signal_different_theme_does_not_block(db):
+    """A signal with the same ticker+action but a different theme must not match."""
+    db.save_article(_make_article())
+    db.save_signal({**_make_signal(), "theme": "fed_dovish"})
+    assert db.has_recent_signal("SPY", "buy", "risk_on", minutes=30) is False
+
+
+def test_has_recent_signal_different_action_does_not_block(db):
+    """BUY signal must not block a SELL signal."""
+    db.save_article(_make_article())
+    db.save_signal(_make_signal())  # action="buy"
+    assert db.has_recent_signal("SPY", "sell", "risk_on", minutes=30) is False
+
+
+def test_expire_stale_pending(db):
+    """expire_stale_pending() must convert old pending signals to expired."""
+    from datetime import datetime, timezone, timedelta
+    old = (datetime.now(timezone.utc) - timedelta(minutes=120)).isoformat()
+    fresh = datetime.now(timezone.utc).isoformat()
+
+    db.save_article(_make_article(article_id=1))
+    db.save_article(_make_article(article_id=2))
+    db.save_signal({**_make_signal(article_id=1), "created_at": old})
+    db.save_signal({**_make_signal(article_id=2), "created_at": fresh})
+
+    expired = db.expire_stale_pending(minutes=60)
+
+    assert expired == 1, f"Expected 1 expired, got {expired}"
+    pending = db.get_pending_signals()
+    assert len(pending) == 1
+    assert pending[0]["article_id"] == 2  # the fresh one is still pending
+
+
+def test_expire_stale_pending_only_touches_pending(db):
+    """expire_stale_pending() must not touch executed/skipped signals."""
+    from datetime import datetime, timezone, timedelta
+    old = (datetime.now(timezone.utc) - timedelta(minutes=120)).isoformat()
+
+    db.save_article(_make_article(article_id=1))
+    db.save_article(_make_article(article_id=2))
+    sid_exec = db.save_signal({**_make_signal(article_id=1), "created_at": old})
+    sid_skip = db.save_signal({**_make_signal(article_id=2), "created_at": old})
+    db.update_signal_status(sid_exec, "executed", executed_at=old)
+    db.update_signal_status(sid_skip, "skipped", skip_reason="risk_check")
+
+    expired = db.expire_stale_pending(minutes=60)
+    assert expired == 0
+
+    signals = db.get_signals(limit=10)
+    statuses = {s["id"]: s["status"] for s in signals}
+    assert statuses[sid_exec] == "executed"
+    assert statuses[sid_skip] == "skipped"

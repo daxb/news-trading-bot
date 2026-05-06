@@ -131,6 +131,13 @@ class Database:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_signals_status ON signals (status)"
             )
+            # Composite index for cooldown lookups: has_recent_signal() filters
+            # by (ticker, action, theme) within a time window. Without this the
+            # query degrades to a scan as the signals table grows.
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_signals_cooldown "
+                "ON signals (ticker, action, theme, created_at)"
+            )
         self._migrate_schema()
 
     def _migrate_schema(self) -> None:
@@ -440,6 +447,63 @@ class Database:
             return row[0] if row else 0
         except Exception:
             logger.exception("Failed to count today's executed signals")
+            return 0
+
+    def has_recent_signal(
+        self, ticker: str, action: str, theme: str, minutes: int
+    ) -> bool:
+        """
+        Return True if a matching signal was created within the last `minutes`.
+
+        Lookback covers status in ('pending', 'executed') OR a prior cooldown
+        suppression (status='skipped' AND skip_reason='cooldown_active').
+        Including cooldown rows prevents a sliding-window resurrection where
+        each new article resets the clock while older suppressions age out.
+        """
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        try:
+            row = self._conn.execute(
+                """
+                SELECT 1 FROM signals
+                WHERE ticker = ? AND action = ? AND theme = ?
+                  AND created_at >= ?
+                  AND (
+                    status IN ('pending', 'executed')
+                    OR (status = 'skipped' AND skip_reason = 'cooldown_active')
+                  )
+                LIMIT 1
+                """,
+                (ticker, action, theme, cutoff),
+            ).fetchone()
+            return row is not None
+        except Exception:
+            logger.exception(
+                "Failed to check recent signal for ticker=%s action=%s theme=%s",
+                ticker, action, theme,
+            )
+            return False
+
+    def expire_stale_pending(self, minutes: int) -> int:
+        """
+        Mark pending signals older than `minutes` as expired.
+
+        Returns the number of rows updated. Used by the periodic sweep job to
+        prevent stale pending signals (e.g. waiting on corroboration that never
+        arrived) from sitting in the queue indefinitely.
+        """
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        try:
+            with self._write_lock, self._conn:
+                cursor = self._conn.execute(
+                    "UPDATE signals SET status = 'expired', skip_reason = 'pending_timeout' "
+                    "WHERE status = 'pending' AND created_at < ?",
+                    (cutoff,),
+                )
+                return cursor.rowcount
+        except Exception:
+            logger.exception("Failed to expire stale pending signals")
             return 0
 
     def count_signal_sources_since(

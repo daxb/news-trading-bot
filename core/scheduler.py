@@ -177,6 +177,46 @@ class BotScheduler:
         signals = self._signals.generate_signals(scored)
         signals = self._macro_ctx.adjust_signals(signals)
 
+        # Cooldown filter: suppress duplicate (ticker, action, theme) signals
+        # within SIGNAL_COOLDOWN_MINUTES. Cooldown-rejected signals are saved
+        # as skipped (not silently dropped) so the auditor sees the suppression.
+        # Tracks both within-batch (multiple articles → same signal in one poll)
+        # and cross-batch (recent DB rows) duplicates.
+        if settings.SIGNAL_COOLDOWN_ENABLED:
+            cooldown_filtered: list[dict] = []
+            cooldown_dropped = 0
+            in_batch_keys: set[tuple[str, str, str]] = set()
+            for sig in signals:
+                key = (sig["ticker"], sig["action"], sig["theme"])
+                in_cooldown = key in in_batch_keys or self._db.has_recent_signal(
+                    ticker=sig["ticker"],
+                    action=sig["action"],
+                    theme=sig["theme"],
+                    minutes=settings.SIGNAL_COOLDOWN_MINUTES,
+                )
+                if in_cooldown:
+                    self._db.save_signal({
+                        **sig,
+                        "status": "skipped",
+                        "skip_reason": "cooldown_active",
+                    })
+                    cooldown_dropped += 1
+                    logger.info(
+                        "[COOLDOWN] suppressed %s %s (theme=%s) — "
+                        "recent signal within %d min",
+                        sig["action"].upper(), sig["ticker"], sig["theme"],
+                        settings.SIGNAL_COOLDOWN_MINUTES,
+                    )
+                else:
+                    in_batch_keys.add(key)
+                    cooldown_filtered.append(sig)
+            if cooldown_dropped:
+                logger.info(
+                    "Cooldown: suppressed %d duplicate signal(s), %d remain",
+                    cooldown_dropped, len(cooldown_filtered),
+                )
+            signals = cooldown_filtered
+
         # Persist articles
         saved_articles = 0
         for article in scored:
@@ -325,6 +365,24 @@ class BotScheduler:
             logger.exception("Failed to build/send hourly update")
 
     # ------------------------------------------------------------------
+    # Pending signal expiry sweep
+    # ------------------------------------------------------------------
+
+    def _expire_pending_signals(self) -> None:
+        """Sweep stale pending signals to keep the cooldown lookback honest."""
+        try:
+            count = self._db.expire_stale_pending(
+                settings.PENDING_SIGNAL_EXPIRY_MINUTES
+            )
+            if count:
+                logger.info(
+                    "Expired %d stale pending signal(s) older than %d min",
+                    count, settings.PENDING_SIGNAL_EXPIRY_MINUTES,
+                )
+        except Exception:
+            logger.exception("Failed to expire stale pending signals")
+
+    # ------------------------------------------------------------------
     # Daily audit
     # ------------------------------------------------------------------
 
@@ -383,6 +441,14 @@ class BotScheduler:
             minute=10,
             timezone=self._ET,
             id="daily_audit",
+            max_instances=1,
+            coalesce=True,
+        )
+        self._scheduler.add_job(
+            self._expire_pending_signals,
+            trigger="interval",
+            minutes=5,
+            id="expire_pending_signals",
             max_instances=1,
             coalesce=True,
         )

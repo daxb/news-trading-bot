@@ -150,6 +150,37 @@ def clear_database() -> None:
         conn.close()
 
 
+def drain_pending_signals() -> int:
+    """
+    Mark all pending signals as expired with skip_reason='cooldown_backfill'.
+
+    One-shot backfill for deploys that introduce signal cooldown to a DB with
+    an existing pending queue. Without this, suppressed-by-design duplicates
+    that were saved as pending before cooldown shipped would still execute.
+    Returns the number of rows updated.
+    """
+    db_path = settings.DB_PATH
+    if not os.path.exists(db_path):
+        logger.info("No database found at %s — nothing to drain", db_path)
+        return 0
+
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.execute(
+            "UPDATE signals SET status = 'expired', skip_reason = 'cooldown_backfill' "
+            "WHERE status = 'pending'"
+        )
+        count = cursor.rowcount
+        conn.commit()
+        logger.info("Drained %d pending signal(s) → expired (cooldown_backfill)", count)
+        return count
+    except Exception:
+        logger.exception("Failed to drain pending signals")
+        return 0
+    finally:
+        conn.close()
+
+
 # ------------------------------------------------------------------
 # Manual steps reminder
 # ------------------------------------------------------------------
@@ -200,9 +231,41 @@ def main() -> None:
         action="store_true",
         help="Only clear the database; skip broker order/position resets",
     )
+    parser.add_argument(
+        "--drain-pending",
+        action="store_true",
+        help="One-shot: expire all pending signals (cooldown_backfill). "
+             "Does not touch brokers, articles, or bot_state. Use after "
+             "deploying signal cooldown to a DB with an existing pending queue.",
+    )
     args = parser.parse_args()
 
     mode = "paper" if settings.PAPER_TRADING else "LIVE"
+
+    # --drain-pending is a standalone mode: skip all other reset steps.
+    if args.drain_pending:
+        print(f"\n=== FIONA Pending Signal Drain ({mode} mode) ===\n")
+        print("Automated step (via DB):")
+        print("  • Mark all pending signals as expired (skip_reason=cooldown_backfill)")
+        print("  • Brokers and other tables are NOT touched.")
+        print()
+
+        if not args.yes:
+            try:
+                answer = input("Proceed? [y/N] ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\nAborted.")
+                sys.exit(0)
+            if answer not in ("y", "yes"):
+                print("Aborted.")
+                sys.exit(0)
+
+        print()
+        logger.info("=== Drain Pending Signals ===")
+        drain_pending_signals()
+        print("\nDrain complete.")
+        return
+
     print(f"\n=== FIONA Bot Reset ({mode} mode) ===\n")
     print("Automated steps (via API):")
     if not args.db_only:

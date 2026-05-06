@@ -265,6 +265,21 @@ def compute_metrics(db: Database, hours: int = 24) -> dict:
                     f"executions for {ticker}"
                 )
 
+        # 4b. Pending repetition: 3+ pending signals sharing (ticker, action, theme).
+        # Surfaces backlogs before they execute (executed-only check above misses
+        # signals stuck pending corroboration or risk-cap saturation).
+        pending = [s for s in signals if s["status"] == "pending"]
+        pending_groups: dict[tuple[str, str, str], int] = {}
+        for sig in pending:
+            key = (sig.get("ticker", ""), sig.get("action", ""), sig.get("theme", ""))
+            pending_groups[key] = pending_groups.get(key, 0) + 1
+        for (ticker, action, theme), count in pending_groups.items():
+            if count >= 3:
+                anomalies.append(
+                    f"Pending repetition: {count} pending {action.upper()} "
+                    f"signals on {ticker} (theme={theme})"
+                )
+
         # 5. Pipeline stall — no articles at all
         if not articles:
             anomalies.append(

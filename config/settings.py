@@ -103,6 +103,15 @@ MIN_SOURCE_COUNT = int(os.getenv('MIN_SOURCE_COUNT', 1))
 # How far back (hours) to look for corroborating signals from other sources.
 CORROBORATION_WINDOW_HOURS = int(os.getenv('CORROBORATION_WINDOW_HOURS', 4))
 
+# Signal cooldown — suppress duplicate (ticker, action, theme) signals within a window.
+# Prevents bursts of identical signals when multiple distinct headlines cover the
+# same event (e.g. 20+ Iran-war SPY/sell signals from different Reuters wires).
+SIGNAL_COOLDOWN_ENABLED = os.getenv('SIGNAL_COOLDOWN_ENABLED', 'true').lower() != 'false'
+SIGNAL_COOLDOWN_MINUTES = int(os.getenv('SIGNAL_COOLDOWN_MINUTES', 30))
+# How long a pending signal can sit before being expired by the sweep job.
+# Must exceed SIGNAL_COOLDOWN_MINUTES so cooldown lookback still sees it.
+PENDING_SIGNAL_EXPIRY_MINUTES = int(os.getenv('PENDING_SIGNAL_EXPIRY_MINUTES', 60))
+
 # Per-theme conviction threshold overrides.
 # Format: THEME_THRESHOLDS=oil_geopolitical=0.35,market_rally=0.45
 # Themes not listed fall back to SIGNAL_CONVICTION_THRESHOLD.
@@ -160,6 +169,16 @@ def _validate_settings() -> None:
     if not (0.0 < MAX_TOTAL_EXPOSURE_PCT <= 1.0):
         errors.append(
             f"MAX_TOTAL_EXPOSURE_PCT must be in (0.0, 1.0], got {MAX_TOTAL_EXPOSURE_PCT}"
+        )
+    if SIGNAL_COOLDOWN_MINUTES <= 0:
+        errors.append(
+            f"SIGNAL_COOLDOWN_MINUTES must be > 0, got {SIGNAL_COOLDOWN_MINUTES}"
+        )
+    if PENDING_SIGNAL_EXPIRY_MINUTES <= SIGNAL_COOLDOWN_MINUTES:
+        errors.append(
+            f"PENDING_SIGNAL_EXPIRY_MINUTES ({PENDING_SIGNAL_EXPIRY_MINUTES}) must be "
+            f"> SIGNAL_COOLDOWN_MINUTES ({SIGNAL_COOLDOWN_MINUTES}) so cooldown lookback "
+            "still sees pending duplicates before they expire"
         )
 
     if errors:

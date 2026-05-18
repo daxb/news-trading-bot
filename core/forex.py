@@ -14,10 +14,11 @@ Environment:
     OANDA_ENVIRONMENT   — 'practice' (default) or 'live'
 """
 
+import json
 import logging
 
 from oandapyV20 import API
-from oandapyV20.endpoints.accounts import AccountSummary
+from oandapyV20.endpoints.accounts import AccountInstruments, AccountSummary
 from oandapyV20.endpoints.orders import OrderCreate
 from oandapyV20.endpoints.positions import OpenPositions, PositionClose, PositionDetails
 from oandapyV20.endpoints.pricing import PricingInfo
@@ -27,6 +28,30 @@ from oandapyV20.exceptions import V20Error
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_v20_error_code(body: str) -> str:
+    """Extract the errorCode from an OANDA V20 error response body (JSON).
+
+    OANDA reject responses include an errorCode like INSTRUMENT_NOT_TRADEABLE
+    that is far more useful for skip_reason than the full JSON dump. Returns
+    "" if the body isn't JSON or has no errorCode.
+    """
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    code = data.get("errorCode")
+    if isinstance(code, str) and code:
+        return code
+    reject = data.get("orderRejectTransaction")
+    if isinstance(reject, dict):
+        reason = reject.get("rejectReason")
+        if isinstance(reason, str) and reason:
+            return reason
+    return ""
 
 
 class ForexBroker:
@@ -43,9 +68,48 @@ class ForexBroker:
             access_token=settings.OANDA_API_KEY,
             environment=settings.OANDA_ENVIRONMENT,
         )
+        # Most recent error message from submit_market_order; "" when the last
+        # call succeeded. Lets the scheduler persist the actual V20 reason as
+        # skip_reason instead of the generic "order_submission_failed".
+        self._last_error: str = ""
+        # Cache of instruments this OANDA account is permitted to trade.
+        # Distinct from the per-cycle tradeable (market-hours) check.
+        self._tradeable_instruments: set[str] = self._load_tradeable_instruments()
         logger.info(
-            "ForexBroker initialized (%s account)", settings.OANDA_ENVIRONMENT
+            "ForexBroker initialized (%s account, %d tradeable instruments)",
+            settings.OANDA_ENVIRONMENT,
+            len(self._tradeable_instruments),
         )
+
+    def _load_tradeable_instruments(self) -> set[str]:
+        """Fetch the account's tradeable instrument list. Empty set on failure (fail-open)."""
+        try:
+            r = AccountInstruments(self._account_id)
+            self._client.request(r)
+            names = {inst["name"] for inst in r.response.get("instruments", [])}
+            logger.debug("OANDA account instruments: %s", sorted(names))
+            return names
+        except Exception:
+            logger.exception(
+                "Failed to load OANDA tradeable instruments — "
+                "account pre-flight check disabled (fail-open)"
+            )
+            return set()
+
+    def is_account_tradeable(self, instrument: str) -> bool:
+        """True if the instrument is enabled for this OANDA account.
+
+        Fail-open: if the instrument list couldn't be loaded (empty set), all
+        instruments are reported tradeable so the order proceeds to OANDA and
+        the actual V20 error surfaces in self._last_error.
+        """
+        if not self._tradeable_instruments:
+            return True
+        return instrument.upper() in self._tradeable_instruments
+
+    def get_last_error(self) -> str:
+        """Most recent error from submit_market_order (empty if last succeeded)."""
+        return self._last_error
 
     # ------------------------------------------------------------------
     # Account
@@ -177,10 +241,15 @@ class ForexBroker:
             side:       'buy' or 'sell'.
 
         Returns:
-            Order result dict, or {} on failure.
+            Order result dict, or {} on failure. On failure, self._last_error
+            holds the specific reason (instrument-not-tradeable, market-closed,
+            V20 reject message, etc.) for the scheduler to surface as skip_reason.
         """
+        self._last_error = ""
+        instrument_upper = instrument.upper()
         units = round(qty) if side.lower() == "buy" else -round(qty)
         if abs(units) == 0:
+            self._last_error = "rounded_units_zero"
             logger.warning(
                 "OANDA order aborted — rounded unit count is 0 for %s (raw qty=%.4f). "
                 "Increase MAX_POSITION_PCT or account equity.",
@@ -188,24 +257,38 @@ class ForexBroker:
             )
             return {}
 
-        # Check instrument is tradeable before submitting to avoid known-bad rejections
+        # Account-level pre-flight: skip instruments the account can't trade
+        # (e.g. commodities not enabled on practice accounts). Distinct from
+        # the market-hours check below; this one never changes during a session.
+        if not self.is_account_tradeable(instrument_upper):
+            self._last_error = "instrument_not_enabled_for_account"
+            logger.warning(
+                "[ORDER] %s is not enabled for this OANDA account — skipping. "
+                "Enable it in the OANDA dashboard to start trading this instrument.",
+                instrument,
+            )
+            return {}
+
+        # Market-hours / live-tradeable check
         try:
-            pr = PricingInfo(self._account_id, params={"instruments": instrument.upper()})
+            pr = PricingInfo(self._account_id, params={"instruments": instrument_upper})
             self._client.request(pr)
             price_data = pr.response["prices"][0]
             if not price_data.get("tradeable", True):
+                self._last_error = "market_closed"
                 logger.warning(
                     "[ORDER] %s is not tradeable right now — skipping order", instrument
                 )
                 return {}
         except V20Error as e:
+            self._last_error = f"pricing_check_failed:{str(e)[:150]}"
             logger.warning("[ORDER] Could not verify tradeable status for %s: %s — skipping", instrument, e)
             return {}
 
         order_body = {
             "order": {
                 "type":       "MARKET",
-                "instrument": instrument.upper(),
+                "instrument": instrument_upper,
                 "units":      str(units),
             }
         }
@@ -214,6 +297,15 @@ class ForexBroker:
             r = OrderCreate(self._account_id, data=order_body)
             self._client.request(r)
             fill = r.response.get("orderFillTransaction", {})
+            reject = r.response.get("orderRejectTransaction", {})
+            if reject:
+                reason = reject.get("rejectReason", "UNKNOWN_REJECT")
+                self._last_error = f"order_rejected:{reason}"
+                logger.error(
+                    "[ORDER] OANDA rejected %s — %s: %s",
+                    instrument, reason, reject,
+                )
+                return {}
             result = {
                 "id":         fill.get("id", ""),
                 "instrument": fill.get("instrument", instrument),
@@ -227,9 +319,14 @@ class ForexBroker:
             )
             return result
         except V20Error as e:
+            # V20Error.__str__ returns the JSON body; parse out errorCode if present
+            err_str = str(e)
+            code = _extract_v20_error_code(err_str)
+            self._last_error = f"v20_error:{code}" if code else f"v20_error:{err_str[:150]}"
             logger.error("[ORDER] OANDA rejected %s: %s", instrument, e)
             return {}
-        except Exception:
+        except Exception as e:
+            self._last_error = f"unexpected:{type(e).__name__}:{str(e)[:120]}"
             logger.exception("Failed to submit OANDA order: %s %s", side, instrument)
             return {}
 

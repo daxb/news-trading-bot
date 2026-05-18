@@ -437,6 +437,85 @@ def test_poll_cooldown_disabled_via_env(monkeypatch):
         db.close()
 
 
+class FakeForexFailing:
+    """Forex broker stub that always fails submit_market_order with a fixed last_error."""
+    def __init__(self, last_error: str = "instrument_not_enabled_for_account"):
+        self._last_error = last_error
+        self.submitted_orders: list[dict] = []
+    def get_position(self, instrument): return None
+    def get_latest_price(self, instrument): return 1.10
+    def get_account(self): return {"equity": 100_000.0}
+    def submit_market_order(self, instrument, qty, side):
+        self.submitted_orders.append({"instrument": instrument, "qty": qty, "side": side})
+        return {}
+    def get_last_error(self): return self._last_error
+
+
+def test_poll_persists_forex_last_error_to_skip_reason():
+    """When the forex broker fails an order, scheduler must persist its last_error
+    in skip_reason for audit visibility."""
+    from core.db import Database
+
+    db = Database(db_path=":memory:")
+    try:
+        articles = [{"id": 1, "headline": "Oil pipeline attack",
+                     "summary": "", "source": "Reuters",
+                     "url": "", "category": "general", "datetime": None, "related": ""}]
+        signal = {"article_id": 1, "ticker": "BCO_USD", "action": "buy",
+                  "confidence": 0.85, "theme": "oil_geopolitical", "rationale": "test"}
+
+        fx = FakeForexFailing(last_error="instrument_not_enabled_for_account")
+        bot = _make_extended_scheduler(
+            news=FakeNews(articles),
+            signals=FakeSignalGen([signal]),
+            db=db,
+            forex=fx,
+            forex_risk=FakeRiskManager(),
+        )
+        bot._poll()
+
+        rows = db.get_signals(limit=10)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "skipped"
+        assert rows[0]["skip_reason"] == (
+            "order_submission_failed:instrument_not_enabled_for_account"
+        )
+    finally:
+        db.close()
+
+
+def test_poll_falls_back_to_generic_skip_reason_when_broker_has_no_last_error():
+    """A broker without get_last_error() must still produce a sensible skip_reason."""
+    from core.db import Database
+
+    db = Database(db_path=":memory:")
+    try:
+        articles = [{"id": 1, "headline": "Fed pivot", "summary": "", "source": "Reuters",
+                     "url": "", "category": "general", "datetime": None, "related": ""}]
+        signal = {"article_id": 1, "ticker": "SPY", "action": "buy",
+                  "confidence": 0.85, "theme": "fed_dovish", "rationale": "test"}
+
+        class FailingBrokerNoLastError:
+            def get_position(self, t): return None
+            def get_latest_price(self, t): return 500.0
+            def submit_market_order(self, t, qty, side): return {}
+            # no get_last_error method
+
+        bot = _make_extended_scheduler(
+            news=FakeNews(articles),
+            signals=FakeSignalGen([signal]),
+            db=db,
+            broker=FailingBrokerNoLastError(),
+        )
+        bot._poll()
+
+        rows = db.get_signals(limit=10)
+        assert len(rows) == 1
+        assert rows[0]["skip_reason"] == "order_submission_failed"
+    finally:
+        db.close()
+
+
 def test_poll_cooldown_allows_different_theme(monkeypatch):
     """Same ticker+action but different theme must not trigger cooldown."""
     from config import settings

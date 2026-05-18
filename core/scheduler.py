@@ -319,8 +319,16 @@ class BotScheduler:
                 executed_signals += 1
                 send_signal_alert({**sig, "qty": qty, "order_id": order.get("id")})
             else:
+                # Persist the broker's specific failure reason when available so
+                # audits show e.g. "order_submission_failed:INSTRUMENT_NOT_TRADEABLE"
+                # instead of a bare "order_submission_failed".
+                skip_reason = "order_submission_failed"
+                if hasattr(broker, "get_last_error"):
+                    detail = broker.get_last_error()
+                    if detail:
+                        skip_reason = f"order_submission_failed:{detail}"[:200]
                 self._db.update_signal_status(
-                    rowid, "skipped", skip_reason="order_submission_failed"
+                    rowid, "skipped", skip_reason=skip_reason
                 )
 
         logger.info(

@@ -168,8 +168,8 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - [x] **OANDA pre-flight + V20 error capture** — cache account's tradeable instruments at startup; persist actual `errorCode`/`rejectReason` as `skip_reason` (no more bare "order_submission_failed")
 - [x] **Equity SELL suppression** — drop SELL signals on equity tickers when no long position is held (replaces ~80 dead `no_position_to_sell` skips/wk with cleaner pre-flight)
 - [x] **Commodity routing → Alpaca ETFs** — GLD for gold themes, BNO for Brent oil (OANDA practice doesn't offer CFDs)
+- [x] **Fly.io RAM right-sized 2GB → 1.5GB** — measured live: bot peak RSS 867MB, dashboard 48MB, system ~73MB; 467MB MemAvailable headroom. Cost: ~$12 → ~$9.50/mo (≈21% saving)
 - [ ] Per-stage pipeline observability (`[PIPELINE]` log line per poll)
-- [ ] Fly.io RAM right-sizing (currently 2GB, ~$12/mo; measure peak, drop to 1.5GB if safe)
 - [ ] Live trading with minimum capital ($500–2,000)
 - [ ] Parallel paper trading for comparison
 - [ ] ML-based signal refinement (gradient boosting)

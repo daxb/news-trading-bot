@@ -27,6 +27,6 @@ primary_region = 'sjc'
 
 
 [[vm]]
-  memory = '2gb'
+  memory = '1536mb'
   cpus = 1
-  memory_mb = 2048
+  memory_mb = 1536

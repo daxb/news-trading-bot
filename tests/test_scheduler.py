@@ -516,6 +516,105 @@ def test_poll_falls_back_to_generic_skip_reason_when_broker_has_no_last_error():
         db.close()
 
 
+def test_poll_suppresses_sell_when_no_position():
+    """Equity SELL signal with no position must be suppressed at pre-flight
+    (no_position_to_sell_suppressed), not the legacy execute-time skip."""
+    from core.db import Database
+
+    db = Database(db_path=":memory:")
+    try:
+        articles = [{"id": 1, "headline": "Recession fears mount", "summary": "",
+                     "source": "Reuters", "url": "", "category": "general",
+                     "datetime": None, "related": ""}]
+        signal = {"article_id": 1, "ticker": "SPY", "action": "sell",
+                  "confidence": 0.85, "theme": "recession_risk", "rationale": "test"}
+
+        broker = FakeBrokerForScheduler(has_position=False)
+        bot = _make_extended_scheduler(
+            news=FakeNews(articles),
+            signals=FakeSignalGen([signal]),
+            db=db,
+            broker=broker,
+        )
+        bot._poll()
+
+        rows = db.get_signals(limit=10)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "skipped"
+        assert rows[0]["skip_reason"] == "no_position_to_sell_suppressed", (
+            f"Expected pre-flight suppression, got {rows[0]['skip_reason']}"
+        )
+        assert len(broker.submitted_orders) == 0
+    finally:
+        db.close()
+
+
+def test_poll_passes_sell_when_position_exists():
+    """Equity SELL with an open position must proceed past the suppression filter."""
+    from core.db import Database
+
+    db = Database(db_path=":memory:")
+    try:
+        articles = [{"id": 1, "headline": "Recession fears mount", "summary": "",
+                     "source": "Reuters", "url": "", "category": "general",
+                     "datetime": None, "related": ""}]
+        signal = {"article_id": 1, "ticker": "SPY", "action": "sell",
+                  "confidence": 0.85, "theme": "recession_risk", "rationale": "test"}
+
+        broker = FakeBrokerForScheduler(has_position=True)
+        bot = _make_extended_scheduler(
+            news=FakeNews(articles),
+            signals=FakeSignalGen([signal]),
+            db=db,
+            broker=broker,
+        )
+        bot._poll()
+
+        rows = db.get_signals(limit=10)
+        assert len(rows) == 1
+        # With position held, signal should execute (not be suppressed)
+        assert rows[0]["skip_reason"] != "no_position_to_sell_suppressed"
+        assert len(broker.submitted_orders) == 1
+    finally:
+        db.close()
+
+
+def test_poll_sell_suppression_does_not_apply_to_forex():
+    """Forex SELL signals are valid even without a position (native shorting),
+    so the equity-only suppression must not touch them."""
+    from core.db import Database
+
+    db = Database(db_path=":memory:")
+    try:
+        articles = [{"id": 1, "headline": "Dollar weakens", "summary": "",
+                     "source": "Reuters", "url": "", "category": "general",
+                     "datetime": None, "related": ""}]
+        signal = {"article_id": 1, "ticker": "EUR_USD", "action": "sell",
+                  "confidence": 0.85, "theme": "usd_strength", "rationale": "test"}
+
+        fx = FakeForexFailing(last_error="")
+        # Override get_position to return None to match the "no position" case;
+        # FakeForexFailing already does this, but be explicit.
+        bot = _make_extended_scheduler(
+            news=FakeNews(articles),
+            signals=FakeSignalGen([signal]),
+            db=db,
+            forex=fx,
+            forex_risk=FakeRiskManager(),
+        )
+        bot._poll()
+
+        rows = db.get_signals(limit=10)
+        # Signal should NOT be suppressed by the equity check — it goes through
+        # to forex execution (and fails there because FakeForexFailing returns {})
+        skip_reasons = [r["skip_reason"] for r in rows]
+        assert "no_position_to_sell_suppressed" not in skip_reasons, (
+            f"Forex SELL must not trigger equity suppression. Got: {skip_reasons}"
+        )
+    finally:
+        db.close()
+
+
 def test_poll_cooldown_allows_different_theme(monkeypatch):
     """Same ticker+action but different theme must not trigger cooldown."""
     from config import settings

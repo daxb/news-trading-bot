@@ -69,6 +69,19 @@ class BotScheduler:
         logger.info("Pipeline ready.")
 
     # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_equity_ticker(ticker: str) -> bool:
+        """True for tickers routed to Alpaca (equities), False for OANDA (forex/commodities).
+
+        Mirrors the routing convention used at execute time: any ticker with
+        an underscore (e.g. EUR_USD, BCO_USD) is an OANDA instrument.
+        """
+        return "_" not in ticker
+
+    # ------------------------------------------------------------------
     # Core poll job
     # ------------------------------------------------------------------
 
@@ -176,6 +189,39 @@ class BotScheduler:
         # Generate signals, then filter/adjust by macro context
         signals = self._signals.generate_signals(scored)
         signals = self._macro_ctx.adjust_signals(signals)
+
+        # Pre-execution filter: suppress equity SELL signals when no long
+        # position is held. The bot generates SELL on bearish news (fed_hawkish,
+        # geopolitical_risk, etc.) but the paper account starts flat, so 80+ of
+        # these become dead skips per week. Suppressing here (vs at execute time)
+        # keeps cooldown lookback honest — we don't want the same dead signal
+        # to fire repeatedly across cycles just because none of them executed.
+        position_suppressed: list[dict] = []
+        cleared: list[dict] = []
+        for sig in signals:
+            if (
+                sig["action"].lower() == "sell"
+                and self._is_equity_ticker(sig["ticker"])
+                and not self._broker.get_position(sig["ticker"])
+            ):
+                self._db.save_signal({
+                    **sig,
+                    "status": "skipped",
+                    "skip_reason": "no_position_to_sell_suppressed",
+                })
+                position_suppressed.append(sig)
+                logger.info(
+                    "[POSITION] suppressed SELL %s (theme=%s) — no long position to sell",
+                    sig["ticker"], sig["theme"],
+                )
+            else:
+                cleared.append(sig)
+        if position_suppressed:
+            logger.info(
+                "Position pre-flight: suppressed %d equity SELL signal(s) with no position",
+                len(position_suppressed),
+            )
+        signals = cleared
 
         # Cooldown filter: suppress duplicate (ticker, action, theme) signals
         # within SIGNAL_COOLDOWN_MINUTES. Cooldown-rejected signals are saved

@@ -178,7 +178,7 @@ _RULES: list[dict] = [
         ],
         "actions": {"positive": "buy", "negative": "sell", "neutral": None},
         "confidence_mult": 0.75,
-        "ticker": "XAU_USD",
+        "ticker": "GLD",
         "description": "Safe-haven demand drives gold higher",
     },
     {
@@ -191,7 +191,7 @@ _RULES: list[dict] = [
         ],
         "actions": {"positive": None, "negative": "sell", "neutral": None},
         "confidence_mult": 0.75,
-        "ticker": "XAU_USD",
+        "ticker": "GLD",
         "description": "Risk-on sentiment or dollar strength pressures gold lower",
     },
     {
@@ -204,7 +204,7 @@ _RULES: list[dict] = [
         ],
         "actions": {"positive": "buy", "negative": "sell", "neutral": None},
         "confidence_mult": 0.70,
-        "ticker": "XAU_USD",
+        "ticker": "GLD",
         "description": "Gold as an inflation hedge when real yields fall",
     },
     {
@@ -217,12 +217,12 @@ _RULES: list[dict] = [
         ],
         "actions": {"positive": "buy", "negative": "buy", "neutral": None},
         "confidence_mult": 0.70,
-        "ticker": "XAU_USD",
+        "ticker": "GLD",
         "description": "Geopolitical crisis drives safe-haven flows into gold",
     },
 
     # ------------------------------------------------------------------
-    # Oil / Crude (BCO_USD via OANDA)
+    # Oil / Crude (BNO ETF via Alpaca — OANDA practice doesn't allow commodities)
     # ------------------------------------------------------------------
     {
         "theme": "oil_supply_squeeze",
@@ -234,7 +234,7 @@ _RULES: list[dict] = [
         ],
         "actions": {"positive": "buy", "negative": "sell", "neutral": None},
         "confidence_mult": 0.75,
-        "ticker": "BCO_USD",
+        "ticker": "BNO",
         "description": "Supply constraints drive crude prices higher",
     },
     {
@@ -247,7 +247,7 @@ _RULES: list[dict] = [
         ],
         "actions": {"positive": "buy", "negative": "sell", "neutral": None},
         "confidence_mult": 0.70,
-        "ticker": "BCO_USD",
+        "ticker": "BNO",
         "description": "Rising demand outlook supports crude prices",
     },
     {
@@ -261,7 +261,7 @@ _RULES: list[dict] = [
         ],
         "actions": {"positive": None, "negative": "sell", "neutral": None},
         "confidence_mult": 0.75,
-        "ticker": "BCO_USD",
+        "ticker": "BNO",
         "description": "Oversupply or demand destruction pushes crude lower",
     },
     {
@@ -274,7 +274,7 @@ _RULES: list[dict] = [
         ],
         "actions": {"positive": "buy", "negative": "buy", "neutral": None},
         "confidence_mult": 0.80,
-        "ticker": "BCO_USD",
+        "ticker": "BNO",
         "description": "Geopolitical supply disruption risk drives crude higher",
     },
 ]

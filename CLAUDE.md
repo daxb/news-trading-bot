@@ -143,7 +143,7 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 ### Phase 2 — Multi-Asset Expansion ✅ COMPLETE
 - [ ] Add GDELT and NewsAPI for broader news coverage (Reddit removed — paid API, sarcasm/noise issues)
 - [x] OANDA integration for forex paper trading (`core/forex.py`)
-- [x] More event→trade rules: forex pairs (EUR/USD), gold (XAU/USD), oil (BCO/USD)
+- [x] More event→trade rules: forex pairs (EUR/USD), gold (GLD ETF), oil (BNO ETF) — commodities route to Alpaca, OANDA practice accounts don't allow CFDs
 - [x] News deduplication — Jaccard similarity across sources (`core/dedup.py`)
 - [x] Streamlit monitoring dashboard (`dashboard/app.py`)
 - [x] Risk controls — position sizing, daily loss limit (`core/risk_manager.py`)
@@ -164,6 +164,12 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - [x] Confirm Fly.io deployment health (bot running, Telegram alerts firing, OANDA exits working)
 - [x] Audit engine + runner (`core/auditor.py` + `scripts/run_audit.py`)
 - [x] Broaden signal pre-filter keywords so FinBERT sees relevant articles (was dropping 100%)
+- [x] **Signal cooldown** — suppress duplicate (ticker, action, theme) signals within 30min (`SIGNAL_COOLDOWN_MINUTES`); pending-signal expiry sweep every 5min
+- [x] **OANDA pre-flight + V20 error capture** — cache account's tradeable instruments at startup; persist actual `errorCode`/`rejectReason` as `skip_reason` (no more bare "order_submission_failed")
+- [x] **Equity SELL suppression** — drop SELL signals on equity tickers when no long position is held (replaces ~80 dead `no_position_to_sell` skips/wk with cleaner pre-flight)
+- [x] **Commodity routing → Alpaca ETFs** — GLD for gold themes, BNO for Brent oil (OANDA practice doesn't offer CFDs)
+- [ ] Per-stage pipeline observability (`[PIPELINE]` log line per poll)
+- [ ] Fly.io RAM right-sizing (currently 2GB, ~$12/mo; measure peak, drop to 1.5GB if safe)
 - [ ] Live trading with minimum capital ($500–2,000)
 - [ ] Parallel paper trading for comparison
 - [ ] ML-based signal refinement (gradient boosting)
@@ -179,6 +185,27 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - **Multi-source confirmation** — never trade on a single headline
 - **Staggered dashboard TTLs** — cache expiry times are intentionally offset per data type (45s signals/articles, 60s broker, 90s forex, 120s FRED macro) so refreshes never all fire at once; "Refresh" preserves the expensive 1hr FRED cache while "Refresh All" clears everything
 - **Broad pre-filter + tight conviction threshold** — signal rule keywords are intentionally wide (e.g. "gold", "oil", "federal reserve") so real headlines pass through to FinBERT; the 0.4 conviction threshold and rule `actions` map handle false positives downstream
+- **Signal cooldown** — `(ticker, action, theme)` tuple cooldown (default 30min) suppresses duplicate signals from distinct headlines covering the same event (e.g. multiple Reuters wires about Iran war producing repeated SPY/sell signals). Lookback includes `pending`, `executed`, AND prior cooldown rows to prevent sliding-window resurrection. Configurable via `SIGNAL_COOLDOWN_ENABLED` / `SIGNAL_COOLDOWN_MINUTES`
+- **Commodities via Alpaca ETFs, not OANDA** — OANDA practice accounts don't permit commodity CFDs (XAU_USD, BCO_USD return INSTRUMENT_NOT_TRADEABLE). Gold themes route to `GLD`, oil themes to `BNO` — both trade on Alpaca alongside SPY. Trade-off: US market hours only, vs OANDA's 24/5
+- **OANDA account pre-flight** — `ForexBroker._load_tradeable_instruments()` caches the account's tradeable list at startup; non-tradeable instruments skip with `instrument_not_enabled_for_account` instead of round-tripping a doomed order. Fail-open if the call errors
+- **Equity SELL = position-gated** — SELL signals on equity tickers (SPY, GLD, BNO) require an existing long position. Without it the signal is suppressed at scheduler filter as `no_position_to_sell_suppressed`. Forex SELL is unaffected (native shorting)
+
+## Skip Reasons (audit vocabulary)
+
+Auditor groups signals by `skip_reason`. Common values, in roughly the order they appear in `_poll()`:
+
+| Skip reason | Source | Meaning |
+|---|---|---|
+| `cooldown_active` | scheduler cooldown filter | Suppressed because a matching signal fired within `SIGNAL_COOLDOWN_MINUTES` |
+| `no_position_to_sell_suppressed` | scheduler pre-flight | Equity SELL with no long position to close |
+| `oanda_not_configured` | scheduler | Forex signal but OANDA env vars missing |
+| `Daily trade limit reached (X/Y)` | risk_manager | `MAX_TRADES_PER_DAY` cap hit for the day |
+| `Already hold a position in X` | risk_manager | Per-ticker BUY accumulation guard |
+| `position_sizing_failed` | scheduler | Risk manager couldn't compute a non-zero qty |
+| `no_position_to_sell` | scheduler (legacy) | Execute-time guard; should be rare now that pre-flight suppression exists |
+| `order_submission_failed:<reason>` | scheduler + broker | Broker rejected the order. Suffix is e.g. `instrument_not_enabled_for_account`, `INSTRUMENT_NOT_TRADEABLE` (OANDA errorCode), `MARKET_HALTED`, `INSUFFICIENT_MARGIN` |
+| `pending_timeout` | expire_pending_signals job | Pending signal aged past `PENDING_SIGNAL_EXPIRY_MINUTES` |
+| `cooldown_backfill` | `reset_bot.py --drain-pending` | One-shot expiry at deploy time |
 
 ## Risk Management Rules
 
@@ -189,6 +216,7 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - Time-based exits: close positions after 2–4 hours if thesis isn't working
 - Minimum confidence threshold of 0.4 (configurable via `SIGNAL_CONVICTION_THRESHOLD`)
 - Multi-source confirmation: `MIN_SOURCE_COUNT` defaults to 1 for paper trading; **set to 2 via env var for production** to require independent corroboration before executing
+- Signal cooldown: `SIGNAL_COOLDOWN_MINUTES` (default 30); `PENDING_SIGNAL_EXPIRY_MINUTES` (default 60). Disable with `SIGNAL_COOLDOWN_ENABLED=false` for instant rollback without redeploy
 - Staggered dashboard cache TTLs are configured in `dashboard/app.py` (45s signals, 60s broker, 90s forex, 120s FRED)
 
 ## Full Bot Reset (Fresh Paper Trading)
@@ -231,6 +259,30 @@ flyctl logs -a trading-bot-lingering-lake-4314
 
 Look for the scheduler starting up and news polling beginning without errors. The dashboard at `https://trading-bot-lingering-lake-4314.fly.dev` should show empty tables — that confirms a clean slate. No bot restart is needed; the scheduler picks up fresh data on its next poll cycle (within 5 minutes).
 
+## Fly.io Deployment Gotchas
+
+Two failure modes observed when deploying via GitHub Actions or `flyctl deploy --remote-only`:
+
+1. **Silent auto-revert when image exceeds 8GB unpacked.** Fly's deploy log reports "Machine ... is now in a good state" even when the new image was rolled back to the prior one (the *reverted* machine is what reached good state). Check by comparing `flyctl status` Image hash against the deploy log. Root cause for this project is usually torch — pin `torch==2.10.0` in the Dockerfile install command so it doesn't get downgraded to the CUDA wheel.
+2. **New machine stays `stopped` after rolling deploy** when the old machine is destroyed and a fresh one is launched in its place. `min_machines_running=1` doesn't seem to auto-start it. Run `flyctl machine start <id>` manually after verifying the deploy.
+
+Always verify after deploy:
+```bash
+flyctl machine list -a trading-bot-lingering-lake-4314
+flyctl ssh console -a trading-bot-lingering-lake-4314 --command "grep -c '<new-code-marker>' /app/<file>"
+```
+
+## Drain Pending Signals Only (Cooldown Backfill)
+
+When a code change introduces new pre-flight filters (cooldown, position suppression), the existing pending queue may contain signals that should have been suppressed. Drain them with one shot — no broker reset, no DB wipe:
+
+```bash
+flyctl ssh console -a trading-bot-lingering-lake-4314 \
+  --command "python /app/scripts/reset_bot.py --drain-pending --yes"
+```
+
+This marks all `status='pending'` rows as `expired` with `skip_reason='cooldown_backfill'`. Run immediately after deploying a filter change; safe to re-run (no-op if the queue is already drained).
+
 ---
 
 ## Log Review Process
@@ -265,6 +317,8 @@ Key events are tagged so you can grep them instantly:
 | `[SIGNAL]` | `core/signal_gen.py` | A trading signal was generated |
 | `[ORDER]` | `core/broker.py`, `core/forex.py` | An order was submitted, filled, rejected, or closed |
 | `[RISK]` | `core/risk_manager.py` | A risk limit fired (daily loss, trade cap) |
+| `[COOLDOWN]` | `core/scheduler.py` | Duplicate signal suppressed within `SIGNAL_COOLDOWN_MINUTES` |
+| `[POSITION]` | `core/scheduler.py` | Equity SELL suppressed because no long position is held |
 | `ERROR` | All modules | Unexpected exception — investigate immediately |
 | `WARNING` | All modules | Degraded operation — worth reviewing |
 

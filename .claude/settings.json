@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(scripts/fly_diag.sh)",
+      "Bash(scripts/fly_diag.sh *)",
+      "Bash(bash scripts/fly_diag.sh)",
+      "Bash(bash scripts/fly_diag.sh *)",
+      "Bash(./scripts/fly_diag.sh)",
+      "Bash(./scripts/fly_diag.sh *)",
+      "Bash(/Users/dax/news-trading-bot/scripts/fly_diag.sh)",
+      "Bash(/Users/dax/news-trading-bot/scripts/fly_diag.sh *)"
+    ]
+  }
+}

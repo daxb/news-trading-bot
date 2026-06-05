@@ -149,6 +149,51 @@ def test_can_trade_no_ticker_skips_accumulation_check(db):
     assert ok is True
 
 
+def test_can_trade_blocks_buy_with_open_unfilled_order(db):
+    """Pre-market queued BUYs sit unfilled (flat book) but must still block a
+    second BUY — this is the stacking bug (4-7 BNO lots/day)."""
+    broker = FakeBroker(
+        position_map={},  # nothing filled yet — book reads flat
+        open_orders=[{"symbol": "BNO", "side": "OrderSide.BUY", "status": "accepted"}],
+    )
+    rm = _make_risk_manager(broker=broker, db=db)
+    ok, reason = rm.can_trade(ticker="BNO", action="buy")
+    assert ok is False
+    assert "Open BUY order already working" in reason
+
+
+def test_can_trade_allows_buy_when_open_order_is_other_ticker(db):
+    broker = FakeBroker(
+        position_map={},
+        open_orders=[{"symbol": "SPY", "side": "OrderSide.BUY", "status": "accepted"}],
+    )
+    rm = _make_risk_manager(broker=broker, db=db)
+    ok, _ = rm.can_trade(ticker="BNO", action="buy")
+    assert ok is True
+
+
+def test_can_trade_open_sell_order_does_not_block_buy(db):
+    """An open SELL (e.g. an exit) must not block a fresh BUY."""
+    broker = FakeBroker(
+        position_map={},
+        open_orders=[{"symbol": "BNO", "side": "OrderSide.SELL", "status": "accepted"}],
+    )
+    rm = _make_risk_manager(broker=broker, db=db)
+    ok, _ = rm.can_trade(ticker="BNO", action="buy")
+    assert ok is True
+
+
+def test_has_open_buy_fails_open_when_lookup_errors(db):
+    """If the broker can't return orders, don't block legitimate trades."""
+    class NoOrdersBroker(FakeBroker):
+        def get_orders(self, status="all"):
+            raise RuntimeError("API down")
+
+    rm = _make_risk_manager(broker=NoOrdersBroker(position_map={}), db=db)
+    ok, _ = rm.can_trade(ticker="BNO", action="buy")
+    assert ok is True
+
+
 # ---------------------------------------------------------------------------
 # position_qty
 # ---------------------------------------------------------------------------

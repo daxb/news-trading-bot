@@ -35,11 +35,13 @@ class FakeBroker:
         positions: list[dict] | None = None,
         prices: dict[str, float] | None = None,
         position_map: dict[str, dict] | None = None,
+        open_orders: list[dict] | None = None,
     ) -> None:
         self.equity = equity
         self.positions = positions or []
         self.prices = prices or {}
         self.position_map = position_map or {}
+        self.open_orders = open_orders or []
         self.submitted_orders: list[dict] = []
         self.closed_positions: list[str] = []
 
@@ -51,6 +53,9 @@ class FakeBroker:
 
     def get_position(self, ticker: str) -> dict | None:
         return self.position_map.get(ticker)
+
+    def get_orders(self, status: str = "all") -> list[dict]:
+        return self.open_orders if status == "open" else []
 
     def get_latest_price(self, ticker: str) -> float | None:
         return self.prices.get(ticker)
@@ -74,15 +79,20 @@ class FakeForexBroker:
         positions: list[dict] | None = None,
         prices: dict[str, float] | None = None,
         position_map: dict[str, dict] | None = None,
+        tradeable: bool = True,
     ) -> None:
         self.equity = equity
         self.positions = positions or []
         self.prices = prices or {}
         self.position_map = position_map or {}
+        self.tradeable = tradeable
         self.closed_positions: list[str] = []
 
     def get_account(self) -> dict:
         return {"equity": self.equity}
+
+    def is_instrument_tradeable(self, instrument: str) -> bool:
+        return self.tradeable
 
     def get_positions(self) -> list[dict]:
         return self.positions

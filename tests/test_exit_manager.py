@@ -27,6 +27,7 @@ def _make_exit_manager(broker=None, db=None, forex=None):
     em._forex = forex
     em._db = db
     em._peak_prices = {}
+    em._close_attempts = {}  # mirrors __init__; required by _close() cooldown logic
     return em
 
 

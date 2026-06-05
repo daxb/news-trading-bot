@@ -107,6 +107,12 @@ class RiskManager:
                 return False, reason
 
         # 3. Per-ticker accumulation guard — block additional BUYs if already long
+        #    OR if an unfilled BUY for the same ticker is already working. Market
+        #    orders submitted pre-market queue as 'accepted'/'held' until the open,
+        #    so get_position() reads a flat book and every queued BUY passes the
+        #    guard — they then all fill at once and stack (observed: 4-7 BNO lots in
+        #    a day, 20-34% of equity vs the 5% MAX_POSITION_PCT cap). Counting open
+        #    orders closes that window.
         if ticker and action and action.lower() == "buy":
             position = self._broker.get_position(ticker)
             if position:
@@ -114,10 +120,41 @@ class RiskManager:
                     f"Already hold a position in {ticker} "
                     f"— skipping additional BUY to prevent accumulation"
                 )
-                logger.warning(reason)
+                logger.warning("[RISK] %s", reason)
+                return False, reason
+            if self._has_open_buy(ticker):
+                reason = (
+                    f"Open BUY order already working for {ticker} "
+                    f"— skipping additional BUY to prevent accumulation"
+                )
+                logger.warning("[RISK] %s", reason)
                 return False, reason
 
         return True, ""
+
+    def _has_open_buy(self, ticker: str) -> bool:
+        """True if an unfilled BUY order for ``ticker`` is already working.
+
+        Complements the filled-position check: pre-market market orders sit in a
+        non-terminal state ('accepted'/'held') until the open, so without this the
+        accumulation guard reads a flat book and lets every queued BUY through.
+
+        Fail-open: if the broker has no order lookup or the call errors, return
+        False rather than block a legitimate trade.
+        """
+        try:
+            open_orders = self._broker.get_orders(status="open")
+        except Exception:
+            logger.exception(
+                "_has_open_buy: order lookup failed for %s — failing open", ticker
+            )
+            return False
+        for order in open_orders:
+            if str(order.get("symbol", "")).upper() != ticker.upper():
+                continue
+            if "buy" in str(order.get("side", "")).lower():
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # Position sizing

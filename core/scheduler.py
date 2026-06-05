@@ -273,6 +273,11 @@ class BotScheduler:
         # Persist signals, run risk checks, execute approved orders
         saved_signals = 0
         executed_signals = 0
+        # Tickers we've already submitted a BUY for this cycle. The risk manager's
+        # open-order check catches cross-poll stacking, but two BUYs for the same
+        # ticker in this same batch can both pass it if Alpaca hasn't reflected the
+        # first order yet (observed: two BNO buys 4s apart). This set closes that gap.
+        cycle_buy_tickers: set[str] = set()
         for sig in signals:
             rowid = self._db.save_signal(sig)
             if not rowid:
@@ -324,6 +329,19 @@ class BotScheduler:
                 risk   = self._risk
                 broker = self._broker
 
+            # In-batch accumulation guard: don't submit a second BUY for a ticker
+            # we already bought earlier in this same cycle (risk manager's open-order
+            # check may not see the first order yet if Alpaca hasn't reflected it).
+            if sig["action"] == "buy" and sig["ticker"] in cycle_buy_tickers:
+                logger.info(
+                    "[POSITION] Signal skipped — BUY for %s already submitted this cycle",
+                    sig["ticker"],
+                )
+                self._db.update_signal_status(
+                    rowid, "skipped", skip_reason="accumulation_in_batch"
+                )
+                continue
+
             approved, reason = risk.can_trade(ticker=sig["ticker"], action=sig["action"])
             if not approved:
                 logger.info("Signal skipped — risk check: %s", reason)
@@ -363,6 +381,8 @@ class BotScheduler:
                     fill_price = broker.get_latest_price(sig["ticker"])
                 self._db.update_signal_status(rowid, "executed", executed_at, fill_price=fill_price)
                 executed_signals += 1
+                if sig["action"] == "buy":
+                    cycle_buy_tickers.add(sig["ticker"])
                 send_signal_alert({**sig, "qty": qty, "order_id": order.get("id")})
             else:
                 # Persist the broker's specific failure reason when available so

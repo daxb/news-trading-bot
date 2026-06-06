@@ -1,23 +1,32 @@
 """
 FinBERT sentiment scoring for the Macro Trader bot.
 
-Classifies financial text as positive / negative / neutral with a
-confidence score. Model loads once at construction; call score() or
-score_article() per article.
+Classifies financial text as positive / negative / neutral with a confidence
+score. Runs the ProsusAI/finbert model via ONNX Runtime (CPU) — deliberately
+torch-free at runtime so the heavy libtorch runtime never loads (~227 MB less
+RSS than the transformers/torch pipeline; lets the Fly VM sit at 1 GB). The
+fp32 ONNX export is numerically identical to torch — labels and scores match to
+4 decimals — so this is a pure footprint change with no signal drift.
+
+The model directory (model.onnx + tokenizer.json + config.json) is exported and
+baked into the image by the Dockerfile; see settings.FINBERT_ONNX_DIR.
 """
 
+import json
 import logging
 import time
+from pathlib import Path
 
-from transformers import pipeline
+import numpy as np
+import onnxruntime as ort
+from tokenizers import Tokenizer
 
-# Suppress noisy "unauthenticated requests" warning from huggingface_hub
-logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
+from config import settings
 
 logger = logging.getLogger(__name__)
 
-_MODEL_ID = "ProsusAI/finbert"
 _MAX_CHARS = 2000  # ~500 tokens; BERT hard limit is 512 tokens
+_MAX_TOKENS = 512
 
 _SAFE_DEFAULT = {"label": "neutral", "score": 0.0}
 
@@ -31,23 +40,62 @@ def _build_text(article: dict) -> str:
 
 
 class SentimentAnalyzer:
-    """Thin wrapper around the ProsusAI/finbert pipeline."""
+    """Thin wrapper around the ProsusAI/finbert model running on ONNX Runtime."""
 
-    def __init__(self) -> None:
+    def __init__(self, model_dir: str | None = None) -> None:
+        model_dir = Path(model_dir or settings.FINBERT_ONNX_DIR)
         start = time.monotonic()
-        logger.info("Loading FinBERT model '%s' (first run downloads ~440 MB) …", _MODEL_ID)
+        logger.info("Loading FinBERT ONNX model from '%s' …", model_dir)
         try:
-            self._pipe = pipeline(
-                "text-classification",
-                model=_MODEL_ID,
-                truncation=True,
-                max_length=512,
+            cfg = json.loads((model_dir / "config.json").read_text())
+            self._id2label = {int(k): v.lower() for k, v in cfg["id2label"].items()}
+
+            self._tokenizer = Tokenizer.from_file(str(model_dir / "tokenizer.json"))
+            self._tokenizer.enable_truncation(max_length=_MAX_TOKENS)
+            self._tokenizer.enable_padding()
+
+            self._session = ort.InferenceSession(
+                str(model_dir / "model.onnx"),
+                providers=["CPUExecutionProvider"],
             )
+            self._input_names = {i.name for i in self._session.get_inputs()}
+
             elapsed = time.monotonic() - start
-            logger.info("FinBERT loaded in %.1f s", elapsed)
+            logger.info("FinBERT ONNX loaded in %.1f s", elapsed)
         except Exception:
-            logger.exception("Failed to load FinBERT model '%s'", _MODEL_ID)
+            logger.exception("Failed to load FinBERT ONNX model from '%s'", model_dir)
             raise
+
+    # ------------------------------------------------------------------
+    # Inference
+    # ------------------------------------------------------------------
+
+    def _infer(self, texts: list[str]) -> list[dict]:
+        """Run a batch of texts through the ONNX session.
+
+        Returns one {"label", "score"} dict per input text. Padding is masked by
+        attention_mask so batched results match single-text scoring exactly.
+        """
+        encs = self._tokenizer.encode_batch(texts)
+        feed = {
+            "input_ids": np.array([e.ids for e in encs], dtype=np.int64),
+            "attention_mask": np.array([e.attention_mask for e in encs], dtype=np.int64),
+        }
+        # FinBERT (BERT-base) also expects token_type_ids; include only if the
+        # exported graph declares it.
+        if "token_type_ids" in self._input_names:
+            feed["token_type_ids"] = np.array([e.type_ids for e in encs], dtype=np.int64)
+
+        logits = self._session.run(None, feed)[0]
+        # Row-wise softmax (numerically stable).
+        shifted = logits - logits.max(axis=1, keepdims=True)
+        exp = np.exp(shifted)
+        probs = exp / exp.sum(axis=1, keepdims=True)
+        best = probs.argmax(axis=1)
+        return [
+            {"label": self._id2label[int(best[r])], "score": round(float(probs[r, best[r]]), 4)}
+            for r in range(len(texts))
+        ]
 
     # ------------------------------------------------------------------
     # Public API
@@ -65,11 +113,7 @@ class SentimentAnalyzer:
             return _SAFE_DEFAULT.copy()
 
         try:
-            result = self._pipe(text[:_MAX_CHARS])[0]
-            return {
-                "label": result["label"].lower(),
-                "score": round(float(result["score"]), 4),
-            }
+            return self._infer([text[:_MAX_CHARS]])[0]
         except Exception:
             logger.exception("FinBERT scoring failed for text (first 80 chars): %.80s", text)
             return _SAFE_DEFAULT.copy()
@@ -92,11 +136,11 @@ class SentimentAnalyzer:
 
     def score_articles(self, articles: list[dict]) -> list[dict]:
         """
-        Score a batch of articles in a single FinBERT forward pass.
+        Score a batch of articles in a single ONNX forward pass.
 
         Roughly 3-5× faster than calling score_article() individually because
         the tokenizer and model run once over a padded batch instead of N
-        separate calls. Falls back to per-article scoring on pipeline error.
+        separate calls. Falls back to per-article scoring on inference error.
         """
         if not articles:
             return []
@@ -110,12 +154,9 @@ class SentimentAnalyzer:
         if non_empty:
             indices, batch_texts = zip(*non_empty)
             try:
-                raw = self._pipe(list(batch_texts), batch_size=16)
-                for i, r in zip(indices, raw):
-                    scored[i] = {
-                        "label": r["label"].lower(),
-                        "score": round(float(r["score"]), 4),
-                    }
+                results = self._infer(list(batch_texts))
+                for i, r in zip(indices, results):
+                    scored[i] = r
             except Exception:
                 logger.exception(
                     "FinBERT batch scoring failed — falling back to per-article scoring"

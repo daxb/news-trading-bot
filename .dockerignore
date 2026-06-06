@@ -10,3 +10,6 @@ __pycache__/
 .gitignore
 *.db
 *.sqlite
+
+# Model is exported in the Dockerfile build stage, not from build context
+models/

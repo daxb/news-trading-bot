@@ -9,3 +9,5 @@ logs/
 .mypy_cache/
 .streamlit/
 *.egg-info/
+# FinBERT ONNX model — exported into the image at build time, never committed
+models/

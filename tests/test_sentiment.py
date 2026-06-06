@@ -1,19 +1,30 @@
 """
-Smoke tests for core/sentiment.py — FinBERT sentiment scorer.
+Smoke tests for core/sentiment.py — FinBERT sentiment scorer (ONNX Runtime).
 
-Tests are marked `slow` because the model download is ~440 MB on first run
-and inference takes a few seconds even on CPU.
+Tests are marked `slow` because they load the FinBERT ONNX model. The model is
+exported into the image at build time; to run these locally point
+FINBERT_ONNX_DIR at a local export (e.g. via `optimum-cli export onnx`). Tests
+skip automatically if no model directory is present.
 
 Run with:
     python -m pytest tests/test_sentiment.py -v -m slow
 """
 
+import os
+
 import pytest
+
+from config import settings
 
 
 @pytest.fixture(scope="module")
 def analyzer():
     """Load FinBERT once for the entire test session."""
+    if not os.path.isdir(settings.FINBERT_ONNX_DIR):
+        pytest.skip(
+            f"FinBERT ONNX model not found at {settings.FINBERT_ONNX_DIR}; "
+            "set FINBERT_ONNX_DIR to a local export to run these tests"
+        )
     from core.sentiment import SentimentAnalyzer
     return SentimentAnalyzer()
 
@@ -44,7 +55,7 @@ def test_negative_headline(analyzer):
     A clearly negative financial headline must be classified as negative
     with confidence > 0.5.
     """
-    result = analyzer.score("Fed raises rates aggressively, recession fears mount, markets crash")
+    result = analyzer.score("Company reports massive quarterly losses, shares plunge")
 
     assert result["label"] == "negative", (
         "Expected 'negative', got '%s' (score=%.4f)" % (result["label"], result["score"])

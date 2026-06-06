@@ -49,6 +49,14 @@ DB_PATH = os.getenv(
     os.path.join(os.path.dirname(__file__), '..', 'data', 'trading.db')
 )
 
+# Directory holding the exported FinBERT ONNX model (model.onnx, tokenizer.json,
+# config.json). Baked into the image by the Dockerfile's export stage. Override
+# with FINBERT_ONNX_DIR to point at a local export when running outside Docker.
+FINBERT_ONNX_DIR = os.getenv(
+    'FINBERT_ONNX_DIR',
+    os.path.join(os.path.dirname(__file__), '..', 'models', 'finbert')
+)
+
 # Pipeline config
 NEWS_POLL_INTERVAL_SECONDS = int(os.getenv('NEWS_POLL_INTERVAL_SECONDS', 300))
 SIGNAL_CONVICTION_THRESHOLD = float(os.getenv('SIGNAL_CONVICTION_THRESHOLD', 0.4))

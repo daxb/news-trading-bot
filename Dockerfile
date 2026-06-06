@@ -1,10 +1,31 @@
 # ── Macro Trader Bot ──────────────────────────────────────────────────────────
 # Supports linux/amd64 (x86 VPS) and linux/arm64 (Oracle Ampere / Apple M-series)
+
+# ── Stage 1: export FinBERT → ONNX ────────────────────────────────────────────
+# torch + optimum live ONLY in this stage. The runtime image below never installs
+# them, so libtorch (~227 MB resident) never loads — that's the whole memory win.
+# This stage is cached and only re-runs when its own lines change, so normal code
+# deploys skip the export entirely.
+FROM python:3.12-slim AS exporter
+# Unpinned optimum: its [onnxruntime] extra pulls optimum-onnx, which constrains
+# optimum's version — pinning a specific optimum here makes pip's resolver
+# contradict itself. The export output is what matters and it's parity-checked
+# against torch downstream, so let pip pick a self-consistent set. torch stays
+# pinned to match the runtime weights it exports.
+RUN pip install --no-cache-dir torch==2.10.0 \
+        --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir "optimum[onnxruntime]"
+RUN optimum-cli export onnx \
+        --model ProsusAI/finbert \
+        --task text-classification \
+        /finbert_onnx
+
+# ── Stage 2: runtime (torch-free) ─────────────────────────────────────────────
 FROM python:3.12-slim
 
 # System dependencies
 # gcc/g++  — compile C extensions in some Python packages
-# libgomp1 — OpenMP runtime required by PyTorch CPU builds
+# libgomp1 — OpenMP runtime required by onnxruntime CPU
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
         g++ \
@@ -13,28 +34,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# ── PyTorch CPU-only (install before requirements.txt) ───────────────────────
-# The default torch wheel bundles CUDA libraries (~1.8 GB we don't need on a
-# CPU-only VM). Installing from the PyTorch CPU index first keeps the image
-# well under Fly.io's 8 GB uncompressed limit.
 COPY requirements.txt .
-RUN pip install --no-cache-dir torch==2.10.0 \
-        --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# ── Pre-download FinBERT (~440 MB, baked into image layer) ───────────────────
-# Runs BEFORE copying source so that editing source code doesn't trigger
-# a re-download on the next build.
-RUN python - <<'EOF'
-from transformers import pipeline
-pipeline(
-    "text-classification",
-    model="ProsusAI/finbert",
-    truncation=True,
-    max_length=512,
-)
-print("FinBERT cached successfully")
-EOF
+# ── Baked FinBERT ONNX model (exported in stage 1) ───────────────────────────
+# Copied BEFORE source so that editing source code doesn't invalidate this layer.
+COPY --from=exporter /finbert_onnx /app/models/finbert
 
 # ── Application source ────────────────────────────────────────────────────────
 COPY . .

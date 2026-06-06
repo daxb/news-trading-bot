@@ -21,7 +21,7 @@ Data Ingestion → NLP/Sentiment → Signal Generation → Order Execution → R
 ### Pipeline Stages
 
 1. **Data Ingestion**: Finnhub API, RSS feeds (CNBC, Sky News, NPR, The Guardian)
-2. **NLP/Sentiment**: FinBERT (`ProsusAI/finbert`) for sentiment, spaCy for NER, keyword-based topic classification; broad pre-filter keywords pass articles to FinBERT, conviction threshold (0.4) handles false positives
+2. **NLP/Sentiment**: FinBERT (`ProsusAI/finbert`) for sentiment **via ONNX Runtime (torch-free at runtime)**, spaCy for NER, keyword-based topic classification; broad pre-filter keywords pass articles to FinBERT, conviction threshold (0.4) handles false positives
 3. **Signal Generation**: Rule-based event→trade mapping with confidence scoring (17 themes)
 4. **Execution**: Alpaca (equities), OANDA (forex + commodities)
 5. **Risk Management**: Position sizing (quarter-Kelly + ATR), circuit breakers, time-based stops
@@ -36,8 +36,9 @@ news-trading-bot/
 ├── .env                         # API keys (NEVER committed to git)
 ├── .gitignore
 ├── .dockerignore
-├── requirements.txt
-├── Dockerfile                   # Single-image build (bot + dashboard)
+├── requirements.txt             # Runtime deps (torch-free; onnxruntime, not torch)
+├── pyproject.toml               # Project metadata + tool config (pytest markers, etc.)
+├── Dockerfile                   # Multi-stage: stage 1 exports FinBERT→ONNX with torch; stage 2 runtime is torch-free
 ├── docker-compose.yml           # Local multi-container dev setup
 ├── fly.toml                     # Fly.io deployment config
 ├── config/
@@ -57,21 +58,35 @@ news-trading-bot/
 │   ├── risk_manager.py          # Position sizing, daily loss limit, trade cap
 │   ├── rss.py                   # Concurrent RSS feed fetcher (CNBC, Sky News, NPR, Guardian)
 │   ├── scheduler.py             # APScheduler polling loop (full pipeline)
-│   ├── sentiment.py             # FinBERT sentiment scoring
+│   ├── sentiment.py             # FinBERT sentiment scoring via ONNX Runtime (torch-free; model baked into image as ONNX by Dockerfile)
 │   └── signal_gen.py            # Rule-based event→trade engine (17 themes); broad pre-filter keywords, FinBERT+conviction threshold for false positives
 ├── dashboard/
 │   └── app.py                   # Streamlit monitoring dashboard; Broker/Macro/Forex clients initialized concurrently on cold start; selective refresh ("Refresh" skips 1hr FRED cache, "Refresh All" clears everything); staggered TTLs per data type
 ├── scripts/
 │   ├── backtest.py              # Walk-forward backtest CLI
 │   ├── fetch_logs.py            # Fetch Fly.io logs → logs/fly_YYYY-MM-DD_HH-MM.txt (NOTE: -n flag broken with current flyctl; use flyctl logs directly)
+│   ├── fly_diag.sh              # Fly.io diagnostics helper (machine status, image hash, memory)
+│   ├── reset_bot.py             # Full reset (--yes) or pending-queue drain (--drain-pending); cancels/closes broker positions, wipes SQLite
 │   ├── run_audit.py             # Run audit engine against live DB via flyctl ssh console
 │   ├── run_bot.py               # Main bot entry point
-│   └── start.sh                 # Docker startup script (bot + dashboard)
-├── tests/
+│   ├── start.sh                 # Docker startup script (bot + dashboard)
+│   └── test_alert.py            # One-off Telegram alert smoke test
+├── tests/                       # Mirrors core/ — one test module per core module
+│   ├── conftest.py              # Shared fixtures
+│   ├── test_alerts.py
+│   ├── test_backtester.py
+│   ├── test_broker.py
 │   ├── test_connectivity.py     # Integration smoke tests (Finnhub, FRED, Alpaca)
 │   ├── test_db.py
+│   ├── test_dedup.py
+│   ├── test_exit_manager.py
+│   ├── test_forex.py
+│   ├── test_macro_context.py
+│   ├── test_risk_manager.py
+│   ├── test_rss.py
 │   ├── test_scheduler.py
 │   ├── test_sentiment.py
+│   ├── test_settings.py
 │   └── test_signal_gen.py
 └── data/                        # SQLite DB (gitignored)
 ```
@@ -81,7 +96,8 @@ news-trading-bot/
 | Component         | Tool / Library                          | Version   |
 |-------------------|-----------------------------------------|-----------|
 | Language          | Python                                  | 3.12+     |
-| Sentiment         | `transformers` + `ProsusAI/finbert`    | 5.2+      |
+| Sentiment runtime | `onnxruntime` (CPU) + `tokenizers`     | 1.26+     |
+| Sentiment model   | `ProsusAI/finbert` exported to ONNX     | —         |
 | NER               | `spacy` + `en_core_web_sm`             | 3.8+      |
 | News API          | `finnhub-python`                        | 2.4+      |
 | RSS Parsing       | `feedparser`                            | 6.0+      |
@@ -91,9 +107,15 @@ news-trading-bot/
 | Forex Broker      | `oandapyV20`                            | 0.6+      |
 | Scheduling        | `apscheduler`                           | 3.11+     |
 | Database          | SQLite (MVP) → PostgreSQL (scale)       | —         |
-| ML Framework      | `torch`                                 | 2.10+     |
+| ONNX export (build-time only) | `torch` + `optimum[onnxruntime]` | torch 2.10 |
 | HTTP              | `requests`                              | 2.32+     |
 | Env Management    | `python-dotenv`                         | —         |
+
+> **Runtime is torch-free.** `torch` and `optimum` live only in the Dockerfile's
+> export stage, which converts `ProsusAI/finbert` to ONNX. The runtime image runs
+> the model through `onnxruntime` (CPU) — libtorch (~227 MB RSS) never loads,
+> which is what lets the Fly VM sit at 1 GB. The fp32 ONNX export is numerically
+> identical to the torch pipeline (labels and scores match).
 
 ## API Keys & Environment
 
@@ -169,6 +191,7 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - [x] **Equity SELL suppression** — drop SELL signals on equity tickers when no long position is held (replaces ~80 dead `no_position_to_sell` skips/wk with cleaner pre-flight)
 - [x] **Commodity routing → Alpaca ETFs** — GLD for gold themes, BNO for Brent oil (OANDA practice doesn't offer CFDs)
 - [x] **Fly.io RAM right-sized 2GB → 1.5GB** — measured live: bot peak RSS 867MB, dashboard 48MB, system ~73MB; 467MB MemAvailable headroom. Cost: ~$12 → ~$9.50/mo (≈21% saving)
+- [x] **Torch-free FinBERT via ONNX Runtime** — export `ProsusAI/finbert` to ONNX in a Dockerfile build stage; runtime never installs torch, cutting bot RSS ~227MB. Enabled the further VM drop **1.5GB → 1GB** (`memory = '1024mb'` in `fly.toml`)
 - [ ] Per-stage pipeline observability (`[PIPELINE]` log line per poll)
 - [ ] Live trading with minimum capital ($500–2,000)
 - [ ] Parallel paper trading for comparison
@@ -263,7 +286,7 @@ Look for the scheduler starting up and news polling beginning without errors. Th
 
 Two failure modes observed when deploying via GitHub Actions or `flyctl deploy --remote-only`:
 
-1. **Silent auto-revert when image exceeds 8GB unpacked.** Fly's deploy log reports "Machine ... is now in a good state" even when the new image was rolled back to the prior one (the *reverted* machine is what reached good state). Check by comparing `flyctl status` Image hash against the deploy log. Root cause for this project is usually torch — pin `torch==2.10.0` in the Dockerfile install command so it doesn't get downgraded to the CUDA wheel.
+1. **Silent auto-revert when image exceeds 8GB unpacked.** Fly's deploy log reports "Machine ... is now in a good state" even when the new image was rolled back to the prior one (the *reverted* machine is what reached good state). Check by comparing `flyctl status` Image hash against the deploy log. Historically the bloat was torch in the runtime image. As of the ONNX migration, **torch now lives only in the Dockerfile's export stage** (`torch==2.10.0`, pinned to the CPU wheel) and the runtime image is torch-free — so the runtime image is far smaller. Still verify the image hash after deploy; this gotcha hasn't been re-confirmed under the new multi-stage build.
 2. **New machine stays `stopped` after rolling deploy** when the old machine is destroyed and a fresh one is launched in its place. `min_machines_running=1` doesn't seem to auto-start it. Run `flyctl machine start <id>` manually after verifying the deploy.
 
 Always verify after deploy:

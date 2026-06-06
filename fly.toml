@@ -12,6 +12,13 @@ primary_region = 'sjc'
 [env]
   OANDA_ENVIRONMENT = 'practice'
   PAPER_TRADING = 'true'
+  # Memory tuning for the FinBERT/torch process on a 1-vCPU machine. Caps glibc
+  # malloc arenas (each can hoard tens of MB on threaded torch/tokenizers procs),
+  # pins torch to 1 thread (matches the single shared vCPU), and disables HF
+  # tokenizers parallelism. Goal: shrink bot RSS enough to drop the VM to 1GB.
+  MALLOC_ARENA_MAX = '2'
+  OMP_NUM_THREADS = '1'
+  TOKENIZERS_PARALLELISM = 'false'
 
 [[mounts]]
   source = 'trading_data'

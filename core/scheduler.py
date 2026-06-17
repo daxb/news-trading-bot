@@ -362,6 +362,20 @@ class BotScheduler:
                 risk   = self._risk
                 broker = self._broker
 
+            # Market-hours gate (equities only; forex trades 24/5). Off-hours equity
+            # orders queue to the open — stale fills plus the rejection class behind
+            # the old phantom executions — and capture no edge per backtest.
+            if (
+                not is_forex
+                and settings.EQUITY_TRADING_HOURS_ONLY
+                and not self._is_trading_hours()
+            ):
+                logger.info("[POSITION] %s skipped — outside market hours", sig["ticker"])
+                self._db.update_signal_status(
+                    rowid, "skipped", skip_reason="outside_market_hours"
+                )
+                continue
+
             # In-batch accumulation guard: don't submit a second BUY for a ticker
             # we already bought earlier in this same cycle (risk manager's open-order
             # check may not see the first order yet if Alpaca hasn't reflected it).
@@ -381,7 +395,7 @@ class BotScheduler:
                 self._db.update_signal_status(rowid, "skipped", skip_reason=reason)
                 continue
 
-            qty = risk.position_qty(sig["ticker"])
+            qty = risk.position_qty(sig["ticker"], theme=sig.get("theme"))
             if qty <= 0:
                 logger.info("Signal skipped — could not size position for %s", sig["ticker"])
                 self._db.update_signal_status(
@@ -405,14 +419,19 @@ class BotScheduler:
             order = broker.submit_market_order(sig["ticker"], qty, sig["action"])
             if order:
                 executed_at = datetime.now(timezone.utc).isoformat()
-                # Capture fill price: OANDA returns it directly; for Alpaca
-                # (async fill) we use the last traded price as a close proxy.
+                # Capture the REAL fill price. OANDA returns it directly. Alpaca
+                # fills async (None until filled — pre-market orders fill at the
+                # open), so we record filled_avg_price when present and let
+                # _reconcile_fills backfill the rest. No more get_latest_price()
+                # proxy, which recorded a frozen off-hours close.
                 if is_forex:
                     fill_price_raw = order.get("price")
                     fill_price = float(fill_price_raw) if fill_price_raw else None
                 else:
-                    fill_price = broker.get_latest_price(sig["ticker"])
+                    fap = order.get("filled_avg_price")
+                    fill_price = float(fap) if fap is not None else None
                 self._db.update_signal_status(rowid, "executed", executed_at, fill_price=fill_price)
+                self._db.set_signal_order_id(rowid, order.get("id"))
                 executed_signals += 1
                 if sig["action"] == "buy":
                     cycle_buy_tickers.add(sig["ticker"])
@@ -490,6 +509,35 @@ class BotScheduler:
             logger.exception("Failed to expire stale pending signals")
 
     # ------------------------------------------------------------------
+    # Fill reconciliation (async Alpaca fills)
+    # ------------------------------------------------------------------
+
+    def _reconcile_fills(self) -> None:
+        """Backfill real fill prices for equity orders that filled asynchronously.
+
+        Alpaca market orders may fill after submission (pre-market orders fill at
+        the open), so fill_price is NULL at execution time. This sweep fetches the
+        actual filled_avg_price by order_id and updates the signal — keeping audit
+        P&L honest instead of relying on a proxy price.
+        """
+        try:
+            pending = self._db.get_unreconciled_fills(hours=24)
+            updated = 0
+            for sig in pending:
+                order = self._broker.get_order(sig["order_id"])
+                if (
+                    order
+                    and str(order.get("status", "")).lower().endswith("filled")
+                    and order.get("filled_avg_price") is not None
+                ):
+                    if self._db.update_signal_fill_price(sig["id"], order["filled_avg_price"]):
+                        updated += 1
+            if updated:
+                logger.info("Fill reconcile: backfilled %d fill price(s)", updated)
+        except Exception:
+            logger.exception("Fill reconciliation sweep failed")
+
+    # ------------------------------------------------------------------
     # Daily audit
     # ------------------------------------------------------------------
 
@@ -556,6 +604,14 @@ class BotScheduler:
             trigger="interval",
             minutes=5,
             id="expire_pending_signals",
+            max_instances=1,
+            coalesce=True,
+        )
+        self._scheduler.add_job(
+            self._reconcile_fills,
+            trigger="interval",
+            minutes=settings.FILL_RECONCILE_INTERVAL_MINUTES,
+            id="reconcile_fills",
             max_instances=1,
             coalesce=True,
         )

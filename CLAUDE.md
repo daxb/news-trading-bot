@@ -191,7 +191,7 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - [x] **Equity SELL suppression** — drop SELL signals on equity tickers when no long position is held (replaces ~80 dead `no_position_to_sell` skips/wk with cleaner pre-flight)
 - [x] **Commodity routing → Alpaca ETFs** — GLD for gold themes, BNO for Brent oil (OANDA practice doesn't offer CFDs)
 - [x] **Fly.io RAM right-sized 2GB → 1.5GB** — measured live: bot peak RSS 867MB, dashboard 48MB, system ~73MB; 467MB MemAvailable headroom. Cost: ~$12 → ~$9.50/mo (≈21% saving)
-- [x] **Torch-free FinBERT via ONNX Runtime** — export `ProsusAI/finbert` to ONNX in a Dockerfile build stage; runtime never installs torch, cutting bot RSS ~227MB. Enabled the further VM drop **1.5GB → 1GB** (`memory = '1024mb'` in `fly.toml`)
+- [x] **Torch-free FinBERT via ONNX Runtime** — export `ProsusAI/finbert` to ONNX in a Dockerfile build stage; runtime never installs torch, cutting bot RSS ~227MB. Enabled a further VM drop to 1GB — but **1GB OOM-looped** (bot peaks ~839MB anon-rss during the first poll's FinBERT scoring, plus the dashboard + OS), so the VM was **reverted to 2GB** (`memory = '2048mb'` in `fly.toml`). Do not retry 1GB.
 - [ ] Per-stage pipeline observability (`[PIPELINE]` log line per poll)
 - [ ] Live trading with minimum capital ($500–2,000)
 - [ ] Parallel paper trading for comparison
@@ -212,6 +212,13 @@ TELEGRAM_CHAT_ID=...     # Phase 2: alerts
 - **Commodities via Alpaca ETFs, not OANDA** — OANDA practice accounts don't permit commodity CFDs (XAU_USD, BCO_USD return INSTRUMENT_NOT_TRADEABLE). Gold themes route to `GLD`, oil themes to `BNO` — both trade on Alpaca alongside SPY. Trade-off: US market hours only, vs OANDA's 24/5
 - **OANDA account pre-flight** — `ForexBroker._load_tradeable_instruments()` caches the account's tradeable list at startup; non-tradeable instruments skip with `instrument_not_enabled_for_account` instead of round-tripping a doomed order. Fail-open if the call errors
 - **Equity SELL = position-gated** — SELL signals on equity tickers (SPY, GLD, BNO) require an existing long position. Without it the signal is suppressed at scheduler filter as `no_position_to_sell_suppressed`. Forex SELL is unaffected (native shorting)
+- **Bearish-equity expression via inverse ETF (default OFF, backtested negative)** — when enabled (`BEARISH_INVERSE_ETF_ENABLED=true`), a flat bearish equity SELL is rewritten to a BUY of the mapped inverse ETF (`INVERSE_ETF_MAP`, default `SPY=SH`) instead of being suppressed; holding the underlying still exits the long. Backtested at −15.5% / 38.5% win, so it ships **dormant** — keep off unless signal timing improves
+- **Market-hours-only equity execution (default ON)** — `EQUITY_TRADING_HOURS_ONLY` gates Alpaca orders to regular US market hours via `_is_trading_hours()`; off-hours equity signals skip as `outside_market_hours`. Forex (OANDA, 24/5) is exempt. Off-hours equity orders otherwise queue to the open (stale fills + the rejection class behind the old phantom executions) and capture no edge
+- **Real fill prices + async reconcile** — execution records the broker's actual fill (`order.filled_avg_price` for Alpaca, fill price for OANDA) and the Alpaca `order_id`, NOT a `get_latest_price()` proxy (which recorded a frozen off-hours close and corrupted audit P&L). Alpaca fills async, so `BotScheduler._reconcile_fills` (every `FILL_RECONCILE_INTERVAL_MINUTES`) backfills NULL fills via `broker.get_order()`. Forex is excluded from the sweep (sync fills; its txn id must never hit the Alpaca client)
+- **Phantom-execution fix** — `BrokerClient.submit_market_order` returns `{}` (falsy) + sets `_last_error` on failure (matching `ForexBroker`), so the scheduler's `if order:` no longer records rejected orders as executed. Previously it returned a truthy `{"error": ...}`, inflating "executed" counts ~3× with frozen-price phantom rows
+- **Edge-weighted position sizing** — `position_qty(ticker, theme)` scales `MAX_POSITION_PCT` by a per-theme multiplier (`THEME_SIZE_MULT`, clamped to `THEME_SIZE_MULT_CAP`, default 1.0×). Concentrates size on themes with demonstrated positive expectancy rather than uniform sizing of a ~0 aggregate edge
+- **Theme pruning** — themes listed in `DISABLED_THEMES` are skipped by `SignalGenerator` entirely. Used to cut negative-expectancy themes (e.g. `gold_geopolitical`) without code changes
+- **oil_supply_squeeze is bullish-only + squeeze-specific** — its `negative→sell` action was removed (redundant with `oil_oversupply`; a flat BNO sell was always suppressed = the theme's 100% skip rate) and over-broad bare keywords (`oil`/`crude`/`opec`/...) dropped so it no longer monopolises all oil news as the first oil rule
 
 ## Skip Reasons (audit vocabulary)
 
@@ -220,7 +227,9 @@ Auditor groups signals by `skip_reason`. Common values, in roughly the order the
 | Skip reason | Source | Meaning |
 |---|---|---|
 | `cooldown_active` | scheduler cooldown filter | Suppressed because a matching signal fired within `SIGNAL_COOLDOWN_MINUTES` |
-| `no_position_to_sell_suppressed` | scheduler pre-flight | Equity SELL with no long position to close |
+| `no_position_to_sell_suppressed` | scheduler pre-flight | Equity SELL with no long position to close (unless inverse-ETF routing is enabled, which rewrites it to an inverse-ETF BUY instead) |
+| `outside_market_hours` | scheduler pre-flight | Equity order skipped because `EQUITY_TRADING_HOURS_ONLY` is on and it's outside RTH; forex exempt |
+| `accumulation_in_batch` | scheduler | Second BUY for the same ticker within one poll cycle (in-batch accumulation guard) |
 | `oanda_not_configured` | scheduler | Forex signal but OANDA env vars missing |
 | `Daily trade limit reached (X/Y)` | risk_manager | `MAX_TRADES_PER_DAY` cap hit for the day |
 | `Already hold a position in X` | risk_manager | Per-ticker BUY accumulation guard |
@@ -237,10 +246,15 @@ Auditor groups signals by `skip_reason`. Common values, in roughly the order the
 - 7% weekly loss → pause until next week
 - 15% max drawdown → require manual reset
 - Time-based exits: close positions after 2–4 hours if thesis isn't working
-- Minimum confidence threshold of 0.4 (configurable via `SIGNAL_CONVICTION_THRESHOLD`)
-- Multi-source confirmation: `MIN_SOURCE_COUNT` defaults to 1 for paper trading; **set to 2 via env var for production** to require independent corroboration before executing
+- Minimum confidence threshold of 0.4 (configurable via `SIGNAL_CONVICTION_THRESHOLD`); per-theme overrides via `THEME_THRESHOLDS` (e.g. `usd_strength=0.6,fed_dovish=0.6,jobs_strong=0.6`)
+- Multi-source confirmation: `MIN_SOURCE_COUNT` (default 1; **currently 2 in production** via Fly secret) requires independent corroboration before executing
 - Signal cooldown: `SIGNAL_COOLDOWN_MINUTES` (default 30); `PENDING_SIGNAL_EXPIRY_MINUTES` (default 60). Disable with `SIGNAL_COOLDOWN_ENABLED=false` for instant rollback without redeploy
+- Edge-weighted sizing: `THEME_SIZE_MULT` (per-theme multiplier on `MAX_POSITION_PCT`, clamped to `THEME_SIZE_MULT_CAP`, default 2.0). Currently set in prod to boost oil/edge themes and shrink losers — **unvalidated starting points**, retune once real fills accrue
+- Theme pruning: `DISABLED_THEMES` (comma list) drops whole themes. Currently `gold_geopolitical` in prod
+- Market hours: `EQUITY_TRADING_HOURS_ONLY` (default on) restricts equity execution to RTH; forex exempt
 - Staggered dashboard cache TTLs are configured in `dashboard/app.py` (45s signals, 60s broker, 90s forex, 120s FRED)
+
+> **Live env config (Fly secrets, 2026-06):** `DISABLED_THEMES=gold_geopolitical`, `THEME_SIZE_MULT=oil_geopolitical=1.5,oil_supply_squeeze=1.25,market_rally=1.1,gold_safe_haven=1.1,usd_strength=0.5,jobs_strong=0.5`, `THEME_THRESHOLDS=usd_strength=0.6,fed_dovish=0.6,jobs_strong=0.6`, `MIN_SOURCE_COUNT=2`, `EQUITY_TRADING_HOURS_ONLY=true` (default), `BEARISH_INVERSE_ETF_ENABLED` unset/off. Every lever is a single env var → instant rollback, no redeploy.
 
 ## Full Bot Reset (Fresh Paper Trading)
 
@@ -341,7 +355,8 @@ Key events are tagged so you can grep them instantly:
 | `[ORDER]` | `core/broker.py`, `core/forex.py` | An order was submitted, filled, rejected, or closed |
 | `[RISK]` | `core/risk_manager.py` | A risk limit fired (daily loss, trade cap) |
 | `[COOLDOWN]` | `core/scheduler.py` | Duplicate signal suppressed within `SIGNAL_COOLDOWN_MINUTES` |
-| `[POSITION]` | `core/scheduler.py` | Equity SELL suppressed because no long position is held |
+| `[POSITION]` | `core/scheduler.py` | Equity SELL suppressed (no long position), in-batch accumulation, or outside-market-hours skip |
+| `[INVERSE]` | `core/scheduler.py` | Bearish flat equity SELL rewritten to an inverse-ETF BUY (only when `BEARISH_INVERSE_ETF_ENABLED`) |
 | `ERROR` | All modules | Unexpected exception — investigate immediately |
 | `WARNING` | All modules | Degraded operation — worth reviewing |
 

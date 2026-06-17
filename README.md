@@ -177,10 +177,20 @@ All settings are in `config/settings.py` and overridable via environment variabl
 | `MAX_ARTICLES_PER_CYCLE`        | 50      | Max articles scored per poll (FinBERT ~2s/article) |
 | `MAX_THEME_EXPOSURE_PCT`        | 0.15    | Max portfolio % exposed to one theme (15%)   |
 | `MAX_TOTAL_EXPOSURE_PCT`        | 0.60    | Max total portfolio exposure (60%)           |
-| `MIN_SOURCE_COUNT`              | 1       | Min distinct sources before executing (set 2 for production) |
+| `MIN_SOURCE_COUNT`              | 1       | Min distinct sources before executing (currently 2 in production) |
 | `CORROBORATION_WINDOW_HOURS`    | 4       | Look-back window for multi-source confirmation |
 | `NEWS_FETCH_TIMEOUT_SECONDS`    | 10      | Per-feed HTTP timeout                        |
 | `THEME_THRESHOLDS`              | `` (empty) | Per-theme conviction overrides, e.g. `oil_geopolitical=0.35,market_rally=0.45` |
+| `SIGNAL_COOLDOWN_ENABLED`       | true    | Suppress duplicate (ticker, action, theme) signals within the cooldown window |
+| `SIGNAL_COOLDOWN_MINUTES`       | 30      | Cooldown window length                        |
+| `PENDING_SIGNAL_EXPIRY_MINUTES` | 60      | Expire pending (uncorroborated) signals after N min |
+| `DISABLED_THEMES`               | `` (empty) | Comma list of themes to skip entirely, e.g. `gold_geopolitical` |
+| `THEME_SIZE_MULT`               | `` (empty) | Per-theme size multiplier on `MAX_POSITION_PCT`, e.g. `oil_geopolitical=1.5,usd_strength=0.5` |
+| `THEME_SIZE_MULT_CAP`           | 2.0     | Hard ceiling on the per-theme size multiplier |
+| `EQUITY_TRADING_HOURS_ONLY`     | true    | Gate equity (Alpaca) execution to regular US market hours; forex exempt |
+| `FILL_RECONCILE_INTERVAL_MINUTES` | 5     | How often the sweep backfills real fill prices for async Alpaca fills |
+| `BEARISH_INVERSE_ETF_ENABLED`   | false   | Express a flat bearish equity SELL as an inverse-ETF BUY (backtested negative — keep off) |
+| `INVERSE_ETF_MAP`               | `SPY=SH` | Underlying→inverse-ETF map used when the above is enabled |
 | `PAPER_TRADING`                 | true    | Set to `false` to enable live trading        |
 
 ## Trading Signals
@@ -218,7 +228,7 @@ The rules engine covers 17 themes mapped to 4 instruments:
 - 60% max total portfolio exposure across all open positions (MAX_TOTAL_EXPOSURE_PCT)
 - Short-sell guard: sell signals are skipped if no existing position held (equities only; forex allows native shorting)
 - Per-ticker accumulation guard: additional BUY signals are skipped if a long position is already held in that ticker (equities + forex)
-- Multi-source confirmation: MIN_SOURCE_COUNT=1 for paper trading, set to 2 for production to require corroboration before executing
+- Multi-source confirmation: MIN_SOURCE_COUNT (currently 2 in production) requires corroboration before executing
 - OANDA signals skipped if OANDA keys are not configured
 
 ## Tests

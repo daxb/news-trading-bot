@@ -190,13 +190,20 @@ class BotScheduler:
         signals = self._signals.generate_signals(scored)
         signals = self._macro_ctx.adjust_signals(signals)
 
-        # Pre-execution filter: suppress equity SELL signals when no long
-        # position is held. The bot generates SELL on bearish news (fed_hawkish,
-        # geopolitical_risk, etc.) but the paper account starts flat, so 80+ of
-        # these become dead skips per week. Suppressing here (vs at execute time)
-        # keeps cooldown lookback honest — we don't want the same dead signal
-        # to fire repeatedly across cycles just because none of them executed.
+        # Pre-execution filter for equity SELL signals with no long position.
+        # The bot can only go long equities (no shorting), so a bearish SELL fired
+        # while flat can't be executed directly. Two outcomes:
+        #   1. If an inverse ETF is mapped for the underlying (e.g. SPY -> SH) and
+        #      the feature is enabled, express the bearish view by BUYING the
+        #      inverse ETF instead. This recovers the ~45% of signals that were
+        #      otherwise dead weight (no_position_to_sell_suppressed).
+        #   2. Otherwise suppress as before. Suppressing here (vs at execute time)
+        #      keeps cooldown lookback honest — we don't want the same dead signal
+        #      to fire repeatedly across cycles just because none executed.
+        # A SELL while *holding* the underlying skips this block and proceeds to a
+        # normal sell (exiting the long), so bearish news still closes positions.
         position_suppressed: list[dict] = []
+        inverted: list[dict] = []
         cleared: list[dict] = []
         for sig in signals:
             if (
@@ -204,18 +211,44 @@ class BotScheduler:
                 and self._is_equity_ticker(sig["ticker"])
                 and not self._broker.get_position(sig["ticker"])
             ):
-                self._db.save_signal({
-                    **sig,
-                    "status": "skipped",
-                    "skip_reason": "no_position_to_sell_suppressed",
-                })
-                position_suppressed.append(sig)
-                logger.info(
-                    "[POSITION] suppressed SELL %s (theme=%s) — no long position to sell",
-                    sig["ticker"], sig["theme"],
+                inverse_etf = (
+                    settings.INVERSE_ETF_MAP.get(sig["ticker"].upper())
+                    if settings.BEARISH_INVERSE_ETF_ENABLED
+                    else None
                 )
+                if inverse_etf:
+                    cleared.append({
+                        **sig,
+                        "ticker": inverse_etf,
+                        "action": "buy",
+                        "rationale": (
+                            f"[inverse: {sig['ticker']} SELL while flat] "
+                            f"{sig.get('rationale', '')}"
+                        ),
+                    })
+                    inverted.append(sig)
+                    logger.info(
+                        "[INVERSE] bearish %s SELL (theme=%s, flat) -> BUY %s",
+                        sig["ticker"], sig["theme"], inverse_etf,
+                    )
+                else:
+                    self._db.save_signal({
+                        **sig,
+                        "status": "skipped",
+                        "skip_reason": "no_position_to_sell_suppressed",
+                    })
+                    position_suppressed.append(sig)
+                    logger.info(
+                        "[POSITION] suppressed SELL %s (theme=%s) — no long position to sell",
+                        sig["ticker"], sig["theme"],
+                    )
             else:
                 cleared.append(sig)
+        if inverted:
+            logger.info(
+                "Inverse-ETF routing: redirected %d flat bearish equity SELL(s) to inverse-ETF BUY(s)",
+                len(inverted),
+            )
         if position_suppressed:
             logger.info(
                 "Position pre-flight: suppressed %d equity SELL signal(s) with no position",

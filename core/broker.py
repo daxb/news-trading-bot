@@ -47,8 +47,17 @@ class BrokerClient:
             api_key=settings.ALPACA_API_KEY,
             secret_key=settings.ALPACA_SECRET_KEY,
         )
+        # Most recent error from submit_market_order; "" when the last call
+        # succeeded. Mirrors ForexBroker so the scheduler can persist the actual
+        # reason as skip_reason instead of the generic "order_submission_failed".
+        self._last_error: str = ""
+
         mode = "paper" if settings.PAPER_TRADING else "LIVE"
         logger.info("BrokerClient initialized in %s mode", mode)
+
+    def get_last_error(self) -> str:
+        """Most recent error from submit_market_order (empty if last succeeded)."""
+        return self._last_error
 
     # ------------------------------------------------------------------
     # Account
@@ -110,7 +119,16 @@ class BrokerClient:
     # ------------------------------------------------------------------
 
     def submit_market_order(self, ticker: str, qty: float, side: str) -> dict:
-        """Submit a market order. `side` must be 'buy' or 'sell'."""
+        """Submit a market order. `side` must be 'buy' or 'sell'.
+
+        Returns the order result dict on success, or {} on failure. On failure
+        self._last_error holds the specific reason for the scheduler to surface
+        as skip_reason. Returning a falsy value on failure (rather than a truthy
+        {"error": ...} dict) is what lets the scheduler's `if order:` check
+        distinguish a real execution from a rejected order — a truthy error dict
+        previously caused rejected orders to be recorded as phantom executions.
+        """
+        self._last_error = ""
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
 
         request = MarketOrderRequest(
@@ -137,11 +155,13 @@ class BrokerClient:
             )
             return result
         except APIError as e:
+            self._last_error = str(e)[:200]
             logger.warning("[ORDER] Alpaca rejected %s %s %s: %s", side, qty, ticker, e)
-            return {"error": str(e)}
+            return {}
         except Exception as e:
+            self._last_error = f"{type(e).__name__}:{str(e)[:150]}"
             logger.exception("Failed to submit order: %s %s %s", side, qty, ticker)
-            return {"error": str(e)}
+            return {}
 
     def get_position(self, ticker: str) -> dict | None:
         """Return the open position for a ticker, or None if not held."""

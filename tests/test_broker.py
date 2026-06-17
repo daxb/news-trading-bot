@@ -23,6 +23,7 @@ def _make_broker():
     broker = BrokerClient.__new__(BrokerClient)
     broker._client = MagicMock()
     broker._data_client = MagicMock()
+    broker._last_error = ""
     return broker
 
 
@@ -96,13 +97,34 @@ def test_submit_market_order_sell():
     assert result["side"] == "sell"
 
 
-def test_submit_market_order_exception_returns_error_detail():
-    """On failure, returned dict should contain an 'error' key with the reason."""
+def test_submit_market_order_failure_returns_falsy_and_sets_last_error():
+    """On failure the order must be FALSY (not a truthy error dict) so the
+    scheduler's `if order:` correctly treats it as a non-execution, and the
+    specific reason must be retrievable via get_last_error().
+
+    Regression: previously returned {"error": ...} (truthy), which the scheduler
+    read as a successful execution and recorded as a phantom 'executed' signal.
+    """
     broker = _make_broker()
     broker._client.submit_order.side_effect = RuntimeError("insufficient buying power")
     result = broker.submit_market_order("SPY", 5.0, "buy")
-    assert "error" in result
-    assert "insufficient buying power" in result["error"]
+    assert not result, f"failed order must be falsy, got truthy: {result!r}"
+    assert "insufficient buying power" in broker.get_last_error()
+
+
+def test_submit_market_order_success_clears_last_error():
+    """A successful submit must leave get_last_error() empty so a stale error
+    from a prior failed call never leaks into the next signal's skip_reason."""
+    broker = _make_broker()
+    broker._last_error = "stale error from previous call"
+    mock_order = SimpleNamespace(
+        id="order-3", symbol="SPY", qty=5.0, side="buy",
+        type="market", status="accepted", submitted_at="2026-01-01",
+    )
+    broker._client.submit_order.return_value = mock_order
+    result = broker.submit_market_order("SPY", 5.0, "buy")
+    assert result  # truthy on success
+    assert broker.get_last_error() == ""
 
 
 # ---------------------------------------------------------------------------

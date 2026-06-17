@@ -139,6 +139,26 @@ if _raw_theme_thresholds:
                 )
 
 
+# Bearish-equity expression via inverse ETF.
+# The bot can only go long equities (no shorting), so bearish equity SELL signals
+# fired while flat were previously suppressed as dead weight. When enabled, such a
+# signal is instead expressed by BUYING the inverse ETF mapped from the underlying
+# (SPY -> SH, ProShares Short S&P500, 1x). A SELL while holding the underlying
+# still exits the long. Ships DISABLED by default — enable with
+# BEARISH_INVERSE_ETF_ENABLED=true once the strategy has been backtested (it is the
+# documented gate for bearish-equity expression). Same flag is the instant rollback
+# (no redeploy). Map format: INVERSE_ETF_MAP=SPY=SH,QQQ=PSQ
+BEARISH_INVERSE_ETF_ENABLED = os.getenv('BEARISH_INVERSE_ETF_ENABLED', 'false').lower() == 'true'
+_raw_inverse_map = os.getenv('INVERSE_ETF_MAP', 'SPY=SH')
+INVERSE_ETF_MAP: dict[str, str] = {}
+for _pair in _raw_inverse_map.split(','):
+    _pair = _pair.strip()
+    if '=' in _pair:
+        _k, _v = _pair.split('=', 1)
+        if _k.strip() and _v.strip():
+            INVERSE_ETF_MAP[_k.strip().upper()] = _v.strip().upper()
+
+
 # ---------------------------------------------------------------------------
 # Validation — catch misconfiguration at startup, not mid-trade
 # ---------------------------------------------------------------------------

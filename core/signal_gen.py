@@ -335,7 +335,10 @@ class SignalGenerator:
         (None, 0.0) if no rule's keywords appear in the text.
         """
         lower = text.lower()
+        disabled = getattr(settings, "DISABLED_THEMES", set())
         for rule in _RULES:
+            if rule["theme"] in disabled:
+                continue
             if any(kw in lower for kw in rule["keywords"]):
                 return rule["theme"], rule["confidence_mult"]
         return None, 0.0
@@ -357,7 +360,10 @@ class SignalGenerator:
         sentiment_score = float(article.get("sentiment_score", 0.0))
 
         lower = text
+        disabled = getattr(settings, "DISABLED_THEMES", set())
         for rule in _RULES:
+            if rule["theme"] in disabled:
+                continue
             if not any(kw in lower for kw in rule["keywords"]):
                 continue
 

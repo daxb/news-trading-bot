@@ -280,6 +280,58 @@ def test_update_signal_exit_price(db):
     assert signals[0]["exit_price"] == 450.0
 
 
+def test_set_signal_order_id_roundtrips(db):
+    """set_signal_order_id() must persist the order_id, readable via get_signals."""
+    db.save_article(_make_article())
+    sid = db.save_signal(_make_signal())
+    assert db.set_signal_order_id(sid, "alpaca-order-123") is True
+    signals = db.get_signals(limit=1)
+    assert signals[0]["order_id"] == "alpaca-order-123"
+
+
+def test_set_signal_order_id_missing_id(db):
+    """set_signal_order_id() must return False for a non-existent signal id."""
+    assert db.set_signal_order_id(9999, "x") is False
+
+
+def test_update_signal_fill_price(db):
+    """update_signal_fill_price() must persist the fill price."""
+    db.save_article(_make_article())
+    sid = db.save_signal(_make_signal())
+    assert db.update_signal_fill_price(sid, 612.34) is True
+    signals = db.get_signals(limit=1)
+    assert signals[0]["fill_price"] == 612.34
+
+
+def test_get_unreconciled_fills(db):
+    """get_unreconciled_fills() must return executed signals with an order_id and no fill_price."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
+    db.save_article(_make_article(article_id=1))
+    db.save_article(_make_article(article_id=2))
+    db.save_article(_make_article(article_id=3))
+
+    # 1) executed, order_id set, fill_price NULL -> should be returned
+    sid_unrec = db.save_signal(_make_signal(article_id=1))
+    db.update_signal_status(sid_unrec, "executed", executed_at=now)
+    db.set_signal_order_id(sid_unrec, "order-unrec")
+
+    # 2) executed, order_id set, but already has a fill_price -> excluded
+    sid_filled = db.save_signal(_make_signal(article_id=2))
+    db.update_signal_status(sid_filled, "executed", executed_at=now)
+    db.set_signal_order_id(sid_filled, "order-filled")
+    db.update_signal_fill_price(sid_filled, 500.0)
+
+    # 3) executed, no order_id -> excluded
+    sid_noorder = db.save_signal(_make_signal(article_id=3))
+    db.update_signal_status(sid_noorder, "executed", executed_at=now)
+
+    unreconciled = db.get_unreconciled_fills(hours=24)
+    ids = {s["id"] for s in unreconciled}
+    assert ids == {sid_unrec}, "Only the executed/order_id-set/no-fill signal should be returned"
+
+
 def test_get_last_executed_signal(db):
     """get_last_executed_signal() must return the most recent executed signal."""
     db.save_article(_make_article(article_id=1))

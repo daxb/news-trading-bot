@@ -149,6 +149,11 @@ class BrokerClient:
                 "status": str(order.status),
                 "submitted_at": str(order.submitted_at),
             }
+            result["filled_avg_price"] = (
+                float(order.filled_avg_price)
+                if getattr(order, "filled_avg_price", None)
+                else None
+            )
             logger.info(
                 "[ORDER] submitted: %s %s %s -> %s",
                 side.upper(), qty, ticker.upper(), result["status"],
@@ -162,6 +167,18 @@ class BrokerClient:
             self._last_error = f"{type(e).__name__}:{str(e)[:150]}"
             logger.exception("Failed to submit order: %s %s %s", side, qty, ticker)
             return {}
+
+    def get_order(self, order_id: str) -> dict | None:
+        """Fetch an order's status and real fill price by id, or None on error."""
+        try:
+            o = self._client.get_order_by_id(order_id)
+            return {
+                "status": str(o.status),
+                "filled_avg_price": float(o.filled_avg_price) if getattr(o, "filled_avg_price", None) else None,
+            }
+        except Exception:
+            logger.exception("Failed to fetch order %s", order_id)
+            return None
 
     def get_position(self, ticker: str) -> dict | None:
         """Return the open position for a ticker, or None if not held."""

@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _YF_MAP: dict[str, str] = {
     "SPY":     "SPY",
+    "SH":      "SH",     # ProShares Short S&P500 (1x inverse) — bearish-equity expression
+    "GLD":     "GLD",
+    "BNO":     "BNO",
     "EUR_USD": "EURUSD=X",
     "GBP_USD": "GBPUSD=X",
     "XAU_USD": "GC=F",   # Gold futures

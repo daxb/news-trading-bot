@@ -124,3 +124,29 @@ def test_window_result_empty():
     assert w.avg_return_pct == 0.0
     assert w.max_drawdown_pct == 0.0
     assert w.profit_factor == 0.0
+
+
+# ---------------------------------------------------------------------------
+# yfinance ticker mapping — every tradeable instrument must be priceable,
+# else its trades are silently dropped from backtests.
+# ---------------------------------------------------------------------------
+
+def test_yf_map_covers_traded_equity_etfs():
+    from core.backtester import _YF_MAP
+    for ticker in ("SPY", "SH", "GLD", "BNO"):
+        assert ticker in _YF_MAP, f"{ticker} missing from _YF_MAP — backtests would drop it"
+
+
+def test_inverse_etf_buy_profits_when_market_falls():
+    """A BUY of the inverse ETF must be scored profitable when its price rises
+    (which is what happens when the underlying falls) — confirms the inverse
+    expression is modelled with normal long P&L, no sign inversion needed."""
+    from core.backtester import TradeResult
+    from datetime import datetime, timezone
+    t = TradeResult(
+        signal_id=1, ticker="SH", action="buy", theme="geopolitical_risk",
+        confidence=0.8, entry_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        exit_time=datetime(2026, 1, 1, 4, tzinfo=timezone.utc),
+        entry_price=40.0, exit_price=41.0,
+    )
+    assert t.pnl_pct > 0 and t.correct

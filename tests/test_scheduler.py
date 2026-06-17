@@ -651,3 +651,109 @@ def test_poll_cooldown_allows_different_theme(monkeypatch):
         )
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Bearish-equity expression via inverse ETF (#2)
+# A bearish equity SELL with no long position is expressed by BUYING the
+# inverse ETF (SPY->SH) instead of being suppressed as dead weight. A SELL
+# while holding the underlying still exits the long (no inverse).
+# ---------------------------------------------------------------------------
+
+class RecordingBroker:
+    """Broker stub that records (ticker, qty, side) of every submitted order."""
+    def __init__(self, positions=None):
+        self._positions = {k.upper(): v for k, v in (positions or {}).items()}
+        self.orders: list[tuple] = []
+        self._last_error = ""
+    def get_position(self, ticker):
+        return self._positions.get(ticker.upper())
+    def get_latest_price(self, ticker):
+        return 500.0
+    def submit_market_order(self, ticker, qty, side):
+        self.orders.append((ticker.upper(), qty, side.lower()))
+        return {"id": "o", "status": "accepted"}
+    def get_last_error(self):
+        return self._last_error
+
+
+def test_poll_bearish_equity_sell_when_flat_buys_inverse_etf(monkeypatch):
+    from config import settings
+    from core.db import Database
+    monkeypatch.setattr(settings, "BEARISH_INVERSE_ETF_ENABLED", True)
+    monkeypatch.setattr(settings, "INVERSE_ETF_MAP", {"SPY": "SH"})
+
+    db = Database(db_path=":memory:")
+    try:
+        articles = [{"id": 1, "headline": "Geopolitical escalation rattles markets",
+                     "summary": "", "source": "Reuters", "url": "", "category": "general",
+                     "datetime": None, "related": ""}]
+        signal = {"article_id": 1, "ticker": "SPY", "action": "sell",
+                  "confidence": 0.85, "theme": "geopolitical_risk", "rationale": "risk-off"}
+        broker = RecordingBroker(positions={})  # flat
+        bot = _make_extended_scheduler(
+            news=FakeNews(articles), signals=FakeSignalGen([signal]),
+            db=db, broker=broker,
+        )
+        bot._poll()
+
+        buys = [o for o in broker.orders if o[0] == "SH" and o[2] == "buy"]
+        assert len(buys) == 1, f"expected one BUY SH, got orders={broker.orders}"
+        assert not any(o[0] == "SPY" and o[2] == "sell" for o in broker.orders)
+    finally:
+        db.close()
+
+
+def test_poll_bearish_equity_sell_when_holding_underlying_exits_long(monkeypatch):
+    from config import settings
+    from core.db import Database
+    monkeypatch.setattr(settings, "BEARISH_INVERSE_ETF_ENABLED", True)
+    monkeypatch.setattr(settings, "INVERSE_ETF_MAP", {"SPY": "SH"})
+
+    db = Database(db_path=":memory:")
+    try:
+        articles = [{"id": 1, "headline": "Geopolitical escalation rattles markets",
+                     "summary": "", "source": "Reuters", "url": "", "category": "general",
+                     "datetime": None, "related": ""}]
+        signal = {"article_id": 1, "ticker": "SPY", "action": "sell",
+                  "confidence": 0.85, "theme": "geopolitical_risk", "rationale": "risk-off"}
+        broker = RecordingBroker(positions={"SPY": {"symbol": "SPY", "qty": 10}})
+        bot = _make_extended_scheduler(
+            news=FakeNews(articles), signals=FakeSignalGen([signal]),
+            db=db, broker=broker,
+        )
+        bot._poll()
+
+        assert any(o[0] == "SPY" and o[2] == "sell" for o in broker.orders), (
+            f"holding SPY: bearish signal must exit the long, got {broker.orders}"
+        )
+        assert not any(o[0] == "SH" for o in broker.orders), "must not buy inverse while long"
+    finally:
+        db.close()
+
+
+def test_poll_inverse_etf_disabled_falls_back_to_suppression(monkeypatch):
+    from config import settings
+    from core.db import Database
+    monkeypatch.setattr(settings, "BEARISH_INVERSE_ETF_ENABLED", False)
+    monkeypatch.setattr(settings, "INVERSE_ETF_MAP", {"SPY": "SH"})
+
+    db = Database(db_path=":memory:")
+    try:
+        articles = [{"id": 1, "headline": "Geopolitical escalation rattles markets",
+                     "summary": "", "source": "Reuters", "url": "", "category": "general",
+                     "datetime": None, "related": ""}]
+        signal = {"article_id": 1, "ticker": "SPY", "action": "sell",
+                  "confidence": 0.85, "theme": "geopolitical_risk", "rationale": "risk-off"}
+        broker = RecordingBroker(positions={})  # flat
+        bot = _make_extended_scheduler(
+            news=FakeNews(articles), signals=FakeSignalGen([signal]),
+            db=db, broker=broker,
+        )
+        bot._poll()
+
+        assert broker.orders == [], f"disabled: nothing should trade, got {broker.orders}"
+        rows = db.get_signals(limit=10)
+        assert rows[0]["skip_reason"] == "no_position_to_sell_suppressed"
+    finally:
+        db.close()

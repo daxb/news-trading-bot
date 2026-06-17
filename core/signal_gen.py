@@ -226,13 +226,20 @@ _RULES: list[dict] = [
     # ------------------------------------------------------------------
     {
         "theme": "oil_supply_squeeze",
+        # Squeeze-specific phrases only. Bare "oil"/"crude"/"opec"/"brent"/"wti"/
+        # "petroleum"/"energy prices" were removed: as the first oil rule they made
+        # this a catch-all that monopolised ALL oil news before the more specific
+        # oil_demand_growth / oil_oversupply / oil_geopolitical rules could match.
         "keywords": [
             "oil rises", "crude rises", "oil prices surge", "crude rally",
             "opec cuts", "supply cut", "oil supply falls", "energy prices rise",
-            "oil shortage", "tight supply", "production cut",
-            "oil", "crude", "opec", "brent", "wti", "petroleum", "energy prices",
+            "oil shortage", "tight supply", "production cut", "output cut",
+            "supply disruption",
         ],
-        "actions": {"positive": "buy", "negative": "sell", "neutral": None},
+        # Bullish-only: the prior negative->sell was redundant (oil_oversupply
+        # already covers bearish crude) and dead weight (a flat BNO sell is always
+        # suppressed), which is what drove this theme's 100% skip rate.
+        "actions": {"positive": "buy", "negative": None, "neutral": None},
         "confidence_mult": 0.75,
         "ticker": "BNO",
         "description": "Supply constraints drive crude prices higher",

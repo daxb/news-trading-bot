@@ -327,3 +327,46 @@ def test_signal_default_source_count_is_one(gen):
     signal = gen.generate_signal(article)
     assert signal is not None
     assert signal["source_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# oil_supply_squeeze retune
+# (1) must not emit a redundant SELL (oil_oversupply covers bearish oil, and a
+#     BNO sell when flat is always suppressed) and (2) must not monopolise all
+#     oil news via over-broad bare keywords ("oil"/"crude"/"opec").
+# ---------------------------------------------------------------------------
+
+def test_oil_supply_squeeze_buys_on_supply_cut(gen):
+    """A genuine supply-squeeze headline with positive sentiment still buys BNO."""
+    article = _article(
+        "Production cut announced after major supply disruption",
+        sentiment_label="positive",
+        sentiment_score=0.9,
+    )
+    signal = gen.generate_signal(article)
+    assert signal is not None
+    assert signal["theme"] == "oil_supply_squeeze"
+    assert signal["action"] == "buy"
+    assert signal["ticker"] == "BNO"
+
+
+def test_oil_supply_squeeze_does_not_sell_on_negative(gen):
+    """Negative sentiment on a squeeze-only headline must NOT produce a signal —
+    the redundant negative->sell action is removed (oil_oversupply handles bearish
+    oil; a flat BNO sell is dead weight that only pollutes the audit)."""
+    article = _article(
+        "Production cut announced after major supply disruption",
+        sentiment_label="negative",
+        sentiment_score=0.9,
+    )
+    signal = gen.generate_signal(article)
+    assert signal is None, f"expected no signal, got {signal}"
+
+
+def test_generic_oil_headline_not_monopolised_by_supply_squeeze(gen):
+    """A generic oil headline (no squeeze language) must no longer classify as
+    oil_supply_squeeze — the bare 'oil' keyword that made it a catch-all is gone."""
+    theme, _ = gen.classify_theme("Oil edges higher in cautious holiday trade")
+    assert theme != "oil_supply_squeeze", (
+        f"generic oil news should route to a more specific oil rule, got {theme}"
+    )

@@ -783,6 +783,7 @@ class FillBroker:
         self._order_id = order_id
         self._lookup = lookup            # dict returned by get_order()
         self.orders = []
+        self.get_order_calls = []
         self._last_error = ""
     def get_position(self, ticker):
         return self._positions.get(ticker.upper())
@@ -794,6 +795,7 @@ class FillBroker:
                 "filled_avg_price": self._fill,
                 "price": str(self._fill) if self._fill is not None else ""}
     def get_order(self, order_id):
+        self.get_order_calls.append(order_id)
         return self._lookup
     def get_last_error(self):
         return self._last_error
@@ -915,5 +917,50 @@ def test_reconcile_fills_backfills_null_fill():
         bot._reconcile_fills()
         row = [r for r in db.get_signals(limit=10) if r["id"] == rowid][0]
         assert row["fill_price"] == 753.2
+    finally:
+        db.close()
+
+
+def test_forex_execution_does_not_set_order_id(monkeypatch):
+    """Forex fills synchronously with a real price, so it must NOT be enrolled in
+    the async reconcile pool (its order_id would otherwise be sent to the Alpaca
+    client). Forex executed rows must have no order_id."""
+    from core.db import Database
+    db = Database(db_path=":memory:")
+    try:
+        articles = [{"id": 1, "headline": "Dollar strengthens", "summary": "",
+                     "source": "Reuters", "url": "", "category": "general",
+                     "datetime": None, "related": ""}]
+        signal = {"article_id": 1, "ticker": "EUR_USD", "action": "sell", "confidence": 0.85,
+                  "theme": "usd_strength", "rationale": "t"}
+        fx = FillBroker(positions={}, fill_price=1.10, order_id="oanda-1")
+        bot = _make_extended_scheduler(news=FakeNews(articles), signals=FakeSignalGen([signal]),
+                                       db=db, forex=fx, forex_risk=FakeRiskManager())
+        bot._poll()
+        row = db.get_signals(limit=10)[0]
+        assert row["status"] == "executed"
+        assert row["order_id"] is None, "forex must not be enrolled in fill reconcile"
+    finally:
+        db.close()
+
+
+def test_reconcile_fills_skips_forex_rows():
+    """Defense in depth: even if a forex row has an order_id, the reconcile sweep
+    (which only knows the Alpaca client) must not look it up."""
+    from core.db import Database
+    db = Database(db_path=":memory:")
+    try:
+        from datetime import datetime, timezone
+        rowid = db.save_signal({"article_id": 1, "ticker": "EUR_USD", "action": "sell",
+                                "confidence": 0.8, "theme": "usd_strength", "rationale": "t"})
+        db.update_signal_status(rowid, "executed",
+                                datetime.now(timezone.utc).isoformat(), fill_price=None)
+        db.set_signal_order_id(rowid, "oanda-txn-1")
+        broker = FillBroker(lookup={"status": "filled", "filled_avg_price": 1.2})
+        bot = _make_extended_scheduler(db=db, broker=broker)
+        bot._reconcile_fills()
+        assert "oanda-txn-1" not in broker.get_order_calls, (
+            "forex order_id must never be sent to the Alpaca get_order lookup"
+        )
     finally:
         db.close()

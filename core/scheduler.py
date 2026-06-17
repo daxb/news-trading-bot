@@ -431,7 +431,11 @@ class BotScheduler:
                     fap = order.get("filled_avg_price")
                     fill_price = float(fap) if fap is not None else None
                 self._db.update_signal_status(rowid, "executed", executed_at, fill_price=fill_price)
-                self._db.set_signal_order_id(rowid, order.get("id"))
+                # Only Alpaca (equity) fills async and needs reconciliation; OANDA
+                # returns its real price synchronously. Enrolling a forex order_id
+                # would later send an OANDA txn id to the Alpaca get_order lookup.
+                if not is_forex:
+                    self._db.set_signal_order_id(rowid, order.get("id"))
                 executed_signals += 1
                 if sig["action"] == "buy":
                     cycle_buy_tickers.add(sig["ticker"])
@@ -524,6 +528,10 @@ class BotScheduler:
             pending = self._db.get_unreconciled_fills(hours=24)
             updated = 0
             for sig in pending:
+                # Equity (Alpaca) only — self._broker is the Alpaca client; a forex
+                # ticker here would mean an OANDA txn id, which it can't look up.
+                if "_" in str(sig.get("ticker", "")):
+                    continue
                 order = self._broker.get_order(sig["order_id"])
                 if (
                     order

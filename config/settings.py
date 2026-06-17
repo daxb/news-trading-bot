@@ -159,6 +159,44 @@ for _pair in _raw_inverse_map.split(','):
             INVERSE_ETF_MAP[_k.strip().upper()] = _v.strip().upper()
 
 
+# Theme pruning — disable whole signal themes that backtest negative.
+# Comma-separated theme names; matching rules are skipped by the SignalGenerator.
+# e.g. DISABLED_THEMES=gold_geopolitical
+DISABLED_THEMES: set[str] = {
+    t.strip() for t in os.getenv('DISABLED_THEMES', '').split(',') if t.strip()
+}
+
+# Edge-weighted position sizing — per-theme multiplier on MAX_POSITION_PCT so size
+# concentrates on themes with demonstrated positive expectancy. Same parser as
+# THEME_THRESHOLDS. Themes not listed size at 1.0×. Clamped to THEME_SIZE_MULT_CAP.
+# e.g. THEME_SIZE_MULT=oil_geopolitical=1.5,usd_strength=0.5
+_raw_theme_size_mult = os.getenv('THEME_SIZE_MULT', '')
+THEME_SIZE_MULT: dict[str, float] = {}
+if _raw_theme_size_mult:
+    for _pair in _raw_theme_size_mult.split(','):
+        _pair = _pair.strip()
+        if '=' in _pair:
+            _k, _v = _pair.split('=', 1)
+            try:
+                THEME_SIZE_MULT[_k.strip()] = float(_v.strip())
+            except ValueError:
+                _logger.warning(
+                    "Ignoring malformed THEME_SIZE_MULT pair: '%s' "
+                    "(expected format: theme_name=1.5)", _pair,
+                )
+THEME_SIZE_MULT_CAP = float(os.getenv('THEME_SIZE_MULT_CAP', 2.0))
+
+# Restrict equity (Alpaca) order execution to regular US market hours. Off-hours
+# equity signals queue to the open (stale fills, the rejection class behind the old
+# phantom executions) and the backtest showed off-hours entries capture no edge.
+# Forex (OANDA, 24/5) is exempt. Default ON.
+EQUITY_TRADING_HOURS_ONLY = os.getenv('EQUITY_TRADING_HOURS_ONLY', 'true').lower() != 'false'
+
+# How often the fill-reconciliation sweep backfills real fill prices for executed
+# equity orders that filled asynchronously after submission.
+FILL_RECONCILE_INTERVAL_MINUTES = int(os.getenv('FILL_RECONCILE_INTERVAL_MINUTES', 5))
+
+
 # ---------------------------------------------------------------------------
 # Validation — catch misconfiguration at startup, not mid-trade
 # ---------------------------------------------------------------------------
@@ -202,6 +240,8 @@ def _validate_settings() -> None:
         errors.append(
             f"SIGNAL_COOLDOWN_MINUTES must be > 0, got {SIGNAL_COOLDOWN_MINUTES}"
         )
+    if THEME_SIZE_MULT_CAP <= 0:
+        errors.append(f"THEME_SIZE_MULT_CAP must be > 0, got {THEME_SIZE_MULT_CAP}")
     if PENDING_SIGNAL_EXPIRY_MINUTES <= SIGNAL_COOLDOWN_MINUTES:
         errors.append(
             f"PENDING_SIGNAL_EXPIRY_MINUTES ({PENDING_SIGNAL_EXPIRY_MINUTES}) must be "

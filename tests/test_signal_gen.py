@@ -370,3 +370,46 @@ def test_generic_oil_headline_not_monopolised_by_supply_squeeze(gen):
     assert theme != "oil_supply_squeeze", (
         f"generic oil news should route to a more specific oil rule, got {theme}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Theme pruning via DISABLED_THEMES
+# A theme listed in settings.DISABLED_THEMES must be skipped by BOTH
+# generate_signal() and classify_theme(). fed_dovish is the sole actionable
+# matcher for "Fed cuts rates unexpectedly, markets cheer", so disabling it
+# cleanly yields no signal (no other rule fires for that headline).
+# ---------------------------------------------------------------------------
+
+def test_disabled_theme_suppresses_generate_signal(gen, monkeypatch):
+    """A theme in DISABLED_THEMES yields no signal that would otherwise fire."""
+    from config import settings
+    monkeypatch.setattr(settings, "DISABLED_THEMES", {"fed_dovish"}, raising=False)
+    article = _article(
+        "Fed cuts rates unexpectedly, markets cheer",
+        sentiment_label="positive",
+        sentiment_score=0.92,
+    )
+    signal = gen.generate_signal(article)
+    assert signal is None, f"expected no signal for disabled theme, got {signal}"
+
+
+def test_disabled_theme_excluded_from_classify_theme(gen, monkeypatch):
+    """classify_theme() must not return a disabled theme."""
+    from config import settings
+    monkeypatch.setattr(settings, "DISABLED_THEMES", {"fed_dovish"}, raising=False)
+    theme, mult = gen.classify_theme("Fed cuts rates unexpectedly, markets cheer")
+    assert theme != "fed_dovish", f"disabled theme should be skipped, got {theme}"
+    assert (theme, mult) == (None, 0.0)
+
+
+def test_theme_still_fires_when_disabled_themes_unset(gen):
+    """Regression guard: with DISABLED_THEMES unset/empty, the theme fires."""
+    article = _article(
+        "Fed cuts rates unexpectedly, markets cheer",
+        sentiment_label="positive",
+        sentiment_score=0.92,
+    )
+    signal = gen.generate_signal(article)
+    assert signal is not None
+    assert signal["theme"] == "fed_dovish"
+    assert signal["action"] == "buy"

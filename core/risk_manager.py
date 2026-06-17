@@ -160,12 +160,16 @@ class RiskManager:
     # Position sizing
     # ------------------------------------------------------------------
 
-    def position_qty(self, ticker: str) -> float:
+    def position_qty(self, ticker: str, theme: str | None = None) -> float:
         """
         Return the number of shares to trade for a new position.
 
-        Sizes at MAX_POSITION_PCT of current equity. Returns 0.0 if the
-        price lookup fails or the resulting qty is below the 0.01 minimum.
+        Sizes at MAX_POSITION_PCT of current equity, optionally scaled by a
+        per-theme multiplier (``settings.THEME_SIZE_MULT``, theme→multiplier)
+        clamped to a hard ceiling (``settings.THEME_SIZE_MULT_CAP``). An
+        unmapped or None theme falls back to a 1.0x multiplier (the baseline).
+        Returns 0.0 if the price lookup fails or the resulting qty is below
+        the 0.01 minimum.
         """
         account = self._broker.get_account()
         equity = account.get("equity", 0.0)
@@ -173,7 +177,10 @@ class RiskManager:
             logger.warning("position_qty: equity is %.2f — skipping", equity)
             return 0.0
 
-        dollar_amount = equity * settings.MAX_POSITION_PCT
+        mult_map = getattr(settings, "THEME_SIZE_MULT", {}) or {}
+        cap = getattr(settings, "THEME_SIZE_MULT_CAP", 2.0)
+        mult = min(mult_map.get(theme, 1.0), cap)
+        dollar_amount = equity * settings.MAX_POSITION_PCT * mult
 
         price = self._broker.get_latest_price(ticker)
         if not price:
@@ -189,7 +196,9 @@ class RiskManager:
             return 0.0
 
         logger.info(
-            "Position size %s: $%.2f equity × %.1f%% = $%.2f → %.2f shares @ $%.2f",
-            ticker, equity, settings.MAX_POSITION_PCT * 100, dollar_amount, qty, price,
+            "Position size %s: $%.2f equity × %.1f%% × %.2f (theme=%s) = $%.2f "
+            "→ %.2f shares @ $%.2f",
+            ticker, equity, settings.MAX_POSITION_PCT * 100, mult, theme,
+            dollar_amount, qty, price,
         )
         return qty

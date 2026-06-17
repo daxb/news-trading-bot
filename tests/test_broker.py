@@ -127,6 +127,60 @@ def test_submit_market_order_success_clears_last_error():
     assert broker.get_last_error() == ""
 
 
+def test_submit_market_order_includes_filled_avg_price():
+    """Success path must include the real fill price from the order."""
+    broker = _make_broker()
+    mock_order = SimpleNamespace(
+        id="order-3", symbol="SPY", qty=5.0, side="buy",
+        type="market", status="filled", submitted_at="2026-01-01",
+        filled_avg_price=755.18,
+    )
+    broker._client.submit_order.return_value = mock_order
+    result = broker.submit_market_order("SPY", 5.0, "buy")
+    assert result["filled_avg_price"] == 755.18
+
+
+def test_submit_market_order_filled_avg_price_none():
+    """When the order has no fill price yet, filled_avg_price must be None."""
+    broker = _make_broker()
+    mock_order = SimpleNamespace(
+        id="order-4", symbol="SPY", qty=5.0, side="buy",
+        type="market", status="accepted", submitted_at="2026-01-01",
+        filled_avg_price=None,
+    )
+    broker._client.submit_order.return_value = mock_order
+    result = broker.submit_market_order("SPY", 5.0, "buy")
+    assert result["filled_avg_price"] is None
+
+
+# ---------------------------------------------------------------------------
+# get_order
+# ---------------------------------------------------------------------------
+
+def test_get_order_returns_status_and_fill():
+    broker = _make_broker()
+    mock_order = SimpleNamespace(status="filled", filled_avg_price=755.18)
+    broker._client.get_order_by_id.return_value = mock_order
+    result = broker.get_order("order-1")
+    assert result == {"status": "filled", "filled_avg_price": 755.18}
+
+
+def test_get_order_no_fill_price():
+    broker = _make_broker()
+    mock_order = SimpleNamespace(status="accepted", filled_avg_price=None)
+    broker._client.get_order_by_id.return_value = mock_order
+    result = broker.get_order("order-2")
+    assert result["status"] == "accepted"
+    assert result["filled_avg_price"] is None
+
+
+def test_get_order_exception_returns_none():
+    broker = _make_broker()
+    broker._client.get_order_by_id.side_effect = RuntimeError("boom")
+    result = broker.get_order("order-x")
+    assert result is None
+
+
 # ---------------------------------------------------------------------------
 # get_position
 # ---------------------------------------------------------------------------

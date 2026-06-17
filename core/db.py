@@ -147,6 +147,7 @@ class Database:
             ("signals", "exit_price",   "REAL"),
             ("signals", "source",       "TEXT"),   # article source for multi-source corroboration
             ("signals", "skip_reason",  "TEXT"),   # why the signal was skipped
+            ("signals", "order_id",     "TEXT"),   # broker order id, for async fill reconciliation
         ]
         for table, col, coltype in migrations:
             try:
@@ -408,6 +409,59 @@ class Database:
         except Exception:
             logger.exception("Failed to update exit_price for signal id=%d", signal_id)
             return False
+
+    def set_signal_order_id(self, signal_id: int, order_id: str) -> bool:
+        """Record the broker order id for a signal (used to reconcile async fills)."""
+        try:
+            with self._write_lock, self._conn:
+                cursor = self._conn.execute(
+                    "UPDATE signals SET order_id = ? WHERE id = ?",
+                    (order_id, signal_id),
+                )
+                return cursor.rowcount == 1
+        except Exception:
+            logger.exception("Failed to set order_id for signal id=%d", signal_id)
+            return False
+
+    def update_signal_fill_price(self, signal_id: int, fill_price: float) -> bool:
+        """Record the real broker fill price once an async order has filled."""
+        try:
+            with self._write_lock, self._conn:
+                cursor = self._conn.execute(
+                    "UPDATE signals SET fill_price = ? WHERE id = ?",
+                    (fill_price, signal_id),
+                )
+                return cursor.rowcount == 1
+        except Exception:
+            logger.exception("Failed to update fill_price for signal id=%d", signal_id)
+            return False
+
+    def get_unreconciled_fills(self, hours: int = 24) -> list[dict]:
+        """
+        Return executed signals that still lack a real fill price.
+
+        These are signals submitted to the broker (order_id set) that filled
+        asynchronously — the reconciler fetches the real fill from the broker
+        and backfills fill_price. Limited to the last `hours` to avoid chasing
+        orders that will never reconcile.
+        """
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM signals
+                WHERE status = 'executed'
+                  AND order_id IS NOT NULL AND order_id != ''
+                  AND fill_price IS NULL
+                  AND executed_at >= :cutoff
+                """,
+                {"cutoff": cutoff},
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            logger.exception("Failed to fetch unreconciled fills")
+            return []
 
     def get_articles_since(self, hours: int = 24) -> list[dict]:
         """Return all articles stored in the last `hours` hours, newest first."""

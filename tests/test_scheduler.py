@@ -81,6 +81,9 @@ class FakeDB:
     def update_signal_status(self, signal_id, status, executed_at=None, fill_price=None, skip_reason=None):
         return True
 
+    def set_signal_order_id(self, signal_id, order_id):
+        return True
+
     def count_signal_sources_since(self, theme, ticker, action, hours):
         return 1
 
@@ -114,6 +117,9 @@ def _make_scheduler(news=None, sentiment=None, signals=None, db=None):
     bot._forex_risk = None
     bot._macro_ctx = FakeMacroCtx()
     bot._exit_mgr = FakeExitMgr()
+    # Deterministic clock: tests assert execution regardless of wall-time. The
+    # market-hours gate (Fix 2) is exercised explicitly by the gate tests below.
+    bot._is_trading_hours = lambda: True
     return bot
 
 
@@ -239,9 +245,11 @@ class FakeRiskManager:
     def __init__(self, approved=True, reason=""):
         self._approved = approved
         self._reason = reason
+        self.last_qty_theme = "__unset__"
     def can_trade(self, ticker=None, action=None):
         return self._approved, self._reason
-    def position_qty(self, ticker):
+    def position_qty(self, ticker, theme=None):
+        self.last_qty_theme = theme
         return 10.0 if self._approved else 0.0
 
 
@@ -288,6 +296,8 @@ def _make_extended_scheduler(
     bot._forex_risk = forex_risk
     bot._macro_ctx = macro_ctx or FakeMacroCtx()
     bot._exit_mgr = exit_mgr or FakeExitMgr()
+    # Deterministic clock (see _make_scheduler).
+    bot._is_trading_hours = lambda: True
     return bot
 
 
@@ -755,5 +765,202 @@ def test_poll_inverse_etf_disabled_falls_back_to_suppression(monkeypatch):
         assert broker.orders == [], f"disabled: nothing should trade, got {broker.orders}"
         rows = db.get_signals(limit=10)
         assert rows[0]["skip_reason"] == "no_position_to_sell_suppressed"
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Wave 2 — market-hours gate (Fix 2), real fill recording (Fix 1),
+# theme-weighted sizing pass-through (Fix 4)
+# ---------------------------------------------------------------------------
+
+class FillBroker:
+    """Records orders and returns a configurable real fill price + order id;
+    supports get_order for the reconcile sweep. Duck-types both Alpaca and OANDA."""
+    def __init__(self, positions=None, fill_price=None, order_id="o1", lookup=None):
+        self._positions = {k.upper(): v for k, v in (positions or {}).items()}
+        self._fill = fill_price
+        self._order_id = order_id
+        self._lookup = lookup            # dict returned by get_order()
+        self.orders = []
+        self.get_order_calls = []
+        self._last_error = ""
+    def get_position(self, ticker):
+        return self._positions.get(ticker.upper())
+    def get_latest_price(self, ticker):
+        return 500.0
+    def submit_market_order(self, ticker, qty, side):
+        self.orders.append((ticker.upper(), qty, side.lower()))
+        return {"id": self._order_id, "status": "accepted",
+                "filled_avg_price": self._fill,
+                "price": str(self._fill) if self._fill is not None else ""}
+    def get_order(self, order_id):
+        self.get_order_calls.append(order_id)
+        return self._lookup
+    def get_last_error(self):
+        return self._last_error
+
+
+def _buy_article_and_signal(theme="market_rally", ticker="SPY"):
+    a = [{"id": 1, "headline": "Markets climb broadly", "summary": "", "source": "Reuters",
+          "url": "", "category": "general", "datetime": None, "related": ""}]
+    s = {"article_id": 1, "ticker": ticker, "action": "buy", "confidence": 0.85,
+         "theme": theme, "rationale": "test"}
+    return a, s
+
+
+def test_poll_skips_equity_outside_market_hours(monkeypatch):
+    from config import settings
+    from core.db import Database
+    monkeypatch.setattr(settings, "EQUITY_TRADING_HOURS_ONLY", True)
+    db = Database(db_path=":memory:")
+    try:
+        articles, signal = _buy_article_and_signal()
+        broker = FillBroker(positions={})
+        bot = _make_extended_scheduler(news=FakeNews(articles),
+                                       signals=FakeSignalGen([signal]), db=db, broker=broker)
+        bot._is_trading_hours = lambda: False
+        bot._poll()
+        assert broker.orders == [], f"equity must not trade off-hours, got {broker.orders}"
+        rows = db.get_signals(limit=10)
+        assert rows[0]["skip_reason"] == "outside_market_hours"
+    finally:
+        db.close()
+
+
+def test_poll_executes_equity_during_market_hours(monkeypatch):
+    from config import settings
+    from core.db import Database
+    monkeypatch.setattr(settings, "EQUITY_TRADING_HOURS_ONLY", True)
+    db = Database(db_path=":memory:")
+    try:
+        articles, signal = _buy_article_and_signal()
+        broker = FillBroker(positions={})
+        bot = _make_extended_scheduler(news=FakeNews(articles),
+                                       signals=FakeSignalGen([signal]), db=db, broker=broker)
+        bot._is_trading_hours = lambda: True
+        bot._poll()
+        assert any(o[0] == "SPY" and o[2] == "buy" for o in broker.orders)
+    finally:
+        db.close()
+
+
+def test_poll_forex_exempt_from_market_hours_gate(monkeypatch):
+    from config import settings
+    from core.db import Database
+    monkeypatch.setattr(settings, "EQUITY_TRADING_HOURS_ONLY", True)
+    db = Database(db_path=":memory:")
+    try:
+        articles = [{"id": 1, "headline": "Dollar strengthens broadly", "summary": "",
+                     "source": "Reuters", "url": "", "category": "general",
+                     "datetime": None, "related": ""}]
+        signal = {"article_id": 1, "ticker": "EUR_USD", "action": "sell", "confidence": 0.85,
+                  "theme": "usd_strength", "rationale": "test"}
+        fx = FillBroker(positions={}, fill_price=1.10)
+        bot = _make_extended_scheduler(news=FakeNews(articles), signals=FakeSignalGen([signal]),
+                                       db=db, forex=fx, forex_risk=FakeRiskManager())
+        bot._is_trading_hours = lambda: False
+        bot._poll()
+        assert any(o[0] == "EUR_USD" for o in fx.orders), "forex must trade 24/5 regardless of RTH"
+        rows = db.get_signals(limit=10)
+        assert rows[0]["skip_reason"] != "outside_market_hours"
+    finally:
+        db.close()
+
+
+def test_poll_records_real_fill_price_and_order_id(monkeypatch):
+    from config import settings
+    from core.db import Database
+    monkeypatch.setattr(settings, "EQUITY_TRADING_HOURS_ONLY", False)  # don't gate this test
+    db = Database(db_path=":memory:")
+    try:
+        articles, signal = _buy_article_and_signal()
+        broker = FillBroker(positions={}, fill_price=755.18, order_id="abc123")
+        bot = _make_extended_scheduler(news=FakeNews(articles),
+                                       signals=FakeSignalGen([signal]), db=db, broker=broker)
+        bot._poll()
+        row = db.get_signals(limit=10)[0]
+        assert row["status"] == "executed"
+        assert row["fill_price"] == 755.18, "must record the real fill, not a proxy"
+        assert row["order_id"] == "abc123"
+    finally:
+        db.close()
+
+
+def test_poll_passes_theme_to_position_qty():
+    from core.db import Database
+    db = Database(db_path=":memory:")
+    try:
+        articles, signal = _buy_article_and_signal(theme="oil_geopolitical", ticker="BNO")
+        risk = FakeRiskManager()
+        broker = FillBroker(positions={})
+        bot = _make_extended_scheduler(news=FakeNews(articles), signals=FakeSignalGen([signal]),
+                                       db=db, risk=risk, broker=broker)
+        bot._poll()
+        assert risk.last_qty_theme == "oil_geopolitical"
+    finally:
+        db.close()
+
+
+def test_reconcile_fills_backfills_null_fill():
+    from core.db import Database
+    db = Database(db_path=":memory:")
+    try:
+        from datetime import datetime, timezone
+        rowid = db.save_signal({"article_id": 1, "ticker": "SPY", "action": "buy",
+                                "confidence": 0.8, "theme": "market_rally", "rationale": "t"})
+        db.update_signal_status(rowid, "executed",
+                                datetime.now(timezone.utc).isoformat(), fill_price=None)
+        db.set_signal_order_id(rowid, "ord-9")
+        broker = FillBroker(lookup={"status": "filled", "filled_avg_price": 753.2})
+        bot = _make_extended_scheduler(db=db, broker=broker)
+        bot._reconcile_fills()
+        row = [r for r in db.get_signals(limit=10) if r["id"] == rowid][0]
+        assert row["fill_price"] == 753.2
+    finally:
+        db.close()
+
+
+def test_forex_execution_does_not_set_order_id(monkeypatch):
+    """Forex fills synchronously with a real price, so it must NOT be enrolled in
+    the async reconcile pool (its order_id would otherwise be sent to the Alpaca
+    client). Forex executed rows must have no order_id."""
+    from core.db import Database
+    db = Database(db_path=":memory:")
+    try:
+        articles = [{"id": 1, "headline": "Dollar strengthens", "summary": "",
+                     "source": "Reuters", "url": "", "category": "general",
+                     "datetime": None, "related": ""}]
+        signal = {"article_id": 1, "ticker": "EUR_USD", "action": "sell", "confidence": 0.85,
+                  "theme": "usd_strength", "rationale": "t"}
+        fx = FillBroker(positions={}, fill_price=1.10, order_id="oanda-1")
+        bot = _make_extended_scheduler(news=FakeNews(articles), signals=FakeSignalGen([signal]),
+                                       db=db, forex=fx, forex_risk=FakeRiskManager())
+        bot._poll()
+        row = db.get_signals(limit=10)[0]
+        assert row["status"] == "executed"
+        assert row["order_id"] is None, "forex must not be enrolled in fill reconcile"
+    finally:
+        db.close()
+
+
+def test_reconcile_fills_skips_forex_rows():
+    """Defense in depth: even if a forex row has an order_id, the reconcile sweep
+    (which only knows the Alpaca client) must not look it up."""
+    from core.db import Database
+    db = Database(db_path=":memory:")
+    try:
+        from datetime import datetime, timezone
+        rowid = db.save_signal({"article_id": 1, "ticker": "EUR_USD", "action": "sell",
+                                "confidence": 0.8, "theme": "usd_strength", "rationale": "t"})
+        db.update_signal_status(rowid, "executed",
+                                datetime.now(timezone.utc).isoformat(), fill_price=None)
+        db.set_signal_order_id(rowid, "oanda-txn-1")
+        broker = FillBroker(lookup={"status": "filled", "filled_avg_price": 1.2})
+        bot = _make_extended_scheduler(db=db, broker=broker)
+        bot._reconcile_fills()
+        assert "oanda-txn-1" not in broker.get_order_calls, (
+            "forex order_id must never be sent to the Alpaca get_order lookup"
+        )
     finally:
         db.close()

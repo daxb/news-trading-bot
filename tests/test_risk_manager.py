@@ -241,6 +241,63 @@ def test_position_qty_rounds_to_two_decimals(db, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# position_qty — edge-weighted theme sizing
+# ---------------------------------------------------------------------------
+
+def test_position_qty_theme_multiplier_scales_qty(db, monkeypatch):
+    """A theme with multiplier 1.5 produces ~1.5x the baseline (1.0) qty."""
+    monkeypatch.setattr(settings, "MAX_POSITION_PCT", 0.05)
+    monkeypatch.setattr(settings, "THEME_SIZE_MULT", {"war": 1.5}, raising=False)
+    monkeypatch.setattr(settings, "THEME_SIZE_MULT_CAP", 2.0, raising=False)
+    broker = FakeBroker(equity=100_000.0, prices={"SPY": 500.0})
+    rm = _make_risk_manager(broker=broker, db=db)
+
+    baseline = rm.position_qty("SPY")
+    weighted = rm.position_qty("SPY", theme="war")
+
+    assert baseline == round(100_000.0 * 0.05 / 500.0, 2)
+    assert weighted == round(100_000.0 * 0.05 * 1.5 / 500.0, 2)
+    assert weighted == baseline * 1.5
+
+
+def test_position_qty_theme_multiplier_clamped_by_cap(db, monkeypatch):
+    """A multiplier above the cap is clamped to THEME_SIZE_MULT_CAP."""
+    monkeypatch.setattr(settings, "MAX_POSITION_PCT", 0.05)
+    monkeypatch.setattr(settings, "THEME_SIZE_MULT", {"hype": 5.0}, raising=False)
+    monkeypatch.setattr(settings, "THEME_SIZE_MULT_CAP", 2.0, raising=False)
+    broker = FakeBroker(equity=100_000.0, prices={"SPY": 500.0})
+    rm = _make_risk_manager(broker=broker, db=db)
+
+    qty = rm.position_qty("SPY", theme="hype")
+    # 5.0 requested but clamped to 2.0
+    assert qty == round(100_000.0 * 0.05 * 2.0 / 500.0, 2)
+
+
+def test_position_qty_unknown_theme_is_baseline(db, monkeypatch):
+    """An unmapped theme falls back to 1.0x (same as baseline)."""
+    monkeypatch.setattr(settings, "MAX_POSITION_PCT", 0.05)
+    monkeypatch.setattr(settings, "THEME_SIZE_MULT", {"war": 1.5}, raising=False)
+    monkeypatch.setattr(settings, "THEME_SIZE_MULT_CAP", 2.0, raising=False)
+    broker = FakeBroker(equity=100_000.0, prices={"SPY": 500.0})
+    rm = _make_risk_manager(broker=broker, db=db)
+
+    qty = rm.position_qty("SPY", theme="unknown_theme")
+    assert qty == round(100_000.0 * 0.05 * 1.0 / 500.0, 2)
+
+
+def test_position_qty_back_compat_no_theme(db, monkeypatch):
+    """Calling without a theme still works and equals the 1.0x baseline."""
+    monkeypatch.setattr(settings, "MAX_POSITION_PCT", 0.05)
+    monkeypatch.setattr(settings, "THEME_SIZE_MULT", {"war": 1.5}, raising=False)
+    monkeypatch.setattr(settings, "THEME_SIZE_MULT_CAP", 2.0, raising=False)
+    broker = FakeBroker(equity=100_000.0, prices={"SPY": 500.0})
+    rm = _make_risk_manager(broker=broker, db=db)
+
+    qty = rm.position_qty("SPY")
+    assert qty == round(100_000.0 * 0.05 * 1.0 / 500.0, 2)
+
+
+# ---------------------------------------------------------------------------
 # _load_or_init_session_equity
 # ---------------------------------------------------------------------------
 
